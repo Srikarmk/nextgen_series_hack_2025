@@ -2,13 +2,11 @@
 Jada - AI Friend by Series.so
 Message Generator using ChatGPT with Function Calling for Web Search
 """
-import logging
 import requests
 import random
 from openai import OpenAI
+from app_logger import logger
 from config import OPENAI_API_KEY
-
-logger = logging.getLogger(__name__)
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 # Music recommendations - Taylor Swift songs
@@ -76,18 +74,17 @@ Split responses like real texts - no one sends paragraphs.
 ```json
 {
   "1": "first reaction/thought",
-  "2": "follow-up comment",
-  "3": "question to vibe check (optional)",
-  "4": "extra thought if hyped (optional)"
+  "2": "follow-up or question"
 }
 ```
 
 ### Message Count Guide:
 
-- **1 message**: Quick reaction or simple answer
-- **2 messages**: Reaction + question OR two quick thoughts
-- **3 messages**: Reaction + comment + question (most common)
-- **4 messages**: Only when ur actually hyped about something
+- **2 messages**: DEFAULT - Use this 70% of the time. Reaction + question OR two quick thoughts
+- **3 messages**: Use 25% of the time - Only when you have something extra to add
+- **4 messages**: Use 5% of the time - ONLY when genuinely hyped or the topic is exciting
+
+IMPORTANT: Default to 2 messages. Most real texts are short. Don't pad your response with extra messages just to fill space. If you only have 2 things to say, only return 2 messages.
 
 ### Your Energy
 
@@ -121,40 +118,55 @@ Off-topic? Redirect smooth: "ok that's not rly my thing but tell me what ur into
 - They mention something they like? acknowledge it and maybe ask more or relate it to their known interests
 - Keep it casual and conversational - don't make it feel like a survey
 
+### REMEMBER: Less is more. 2 messages is the sweet spot. Only add more if you genuinely have more to say.
+
 **CRITICAL: ALWAYS return valid JSON with message keys "1", "2", "3", "4" as needed. Never return plain text.**
 """
 
-def add_music_link_if_applicable(messages: list, known_interests: list, prompt_type: str = "response", probability: float = 0.3) -> list:
+def add_music_link_if_applicable(messages: list, known_interests: list, prompt_type: str = "response", user_message: str = None) -> list:
     """
-    Randomly add a music link to messages if user likes music
+    Add a music link to messages ONLY if current message is about music
     
     Args:
         messages: List of message strings
-        known_interests: List of user interests
+        known_interests: List of user interests (not used - only current message matters)
         prompt_type: Type of message (only add for "response" type)
-        probability: Probability of adding a music link (default 0.3 = 30%)
+        user_message: The current user message to check for music interest
         
     Returns:
         list: Messages with potentially added music link
     """
     # Only add music links for response messages, not initial or hype
-    if prompt_type != "response" or not messages or not user_likes_music(known_interests):
+    if prompt_type != "response" or not messages:
         return messages
     
-    # Randomly decide to add music link (30% chance)
-    if random.random() < probability:
+    # ONLY check the current message - don't use known_interests to avoid adding music to everything
+    if not user_message:
+        return messages
+    
+    message_lower = user_message.lower()
+    
+    # Check for explicit music mentions or requests
+    music_keywords = ["music", "song", "songs", "taylor", "swift", "listening to", "spotify", "apple music", "playlist", "album", "artist", "band"]
+    explicit_music_requests = [
+        "music recommendation", "song recommendation", "recommend music", "recommend a song",
+        "what song", "what music", "need music", "want music", "give me music", "play music",
+        "music suggestions", "song suggestions", "music rec", "song rec"
+    ]
+    
+    # Only add music if current message explicitly mentions music or asks for recommendations
+    has_music_keyword = any(keyword in message_lower for keyword in music_keywords)
+    has_explicit_request = any(phrase in message_lower for phrase in explicit_music_requests)
+    
+    if has_music_keyword or has_explicit_request:
         song = get_random_song()
-        # Add music link as a new message (keep it casual and Gen Z style)
-        music_phrases = [
-            f"btw this song is hitting rn: {song['link']}",
-            f"ok but this song >>> {song['link']}",
-            f"this song is rent free in my head: {song['link']}",
-            f"lowkey obsessed with this rn: {song['link']}",
-            f"this song is giving main character energy: {song['link']}"
-        ]
-        music_message = random.choice(music_phrases)
-        messages.append(music_message)
-        logger.info(f"🎵 Added music recommendation: {song['name']}")
+        # REPLACE messages with music-specific response (not append)
+        messages.clear()
+        messages.append("let's gooo, music is everything")
+        messages.append("what kind of vibes are you into? like any specific genres or artists?")
+        messages.append("i'm listin to this rn")
+        messages.append(song['link'])
+        logger.info(f"[MUSIC] Added music recommendation: {song['name']}")
     
     return messages
 
@@ -195,7 +207,7 @@ def parse_jada_response(response_text: str) -> list:
                     messages.append(msg)
         
         if messages:
-            logger.debug(f"📱 Parsed {len(messages)} message(s) from JSON response")
+            logger.debug(f"[MSG] Parsed {len(messages)} message(s) from JSON response")
             return messages
         else:
             logger.warning("No messages found in JSON response, using fallback")
@@ -288,7 +300,7 @@ def generate_catchy_message(prompt_type="initial", user_message: str = None,
     
     prompts = {
         "initial": "Generate a casual greeting to start a text conversation. Ask what they're up to in a chill way. Return JSON with 1-2 messages.",
-        "response": "Read the user's message. Understand what they're saying and respond meaningfully. Split into 1-4 messages like real texts. If they asked a question, answer it briefly. If they shared something, respond to it. If they need info, use web_search. Return JSON format.",
+        "response": "Read the user's message. Understand what they're saying and respond meaningfully. Split into 1-4 messages like real texts. If they asked a question, answer it briefly. If they shared something, respond to it. Return JSON format.",
         "hype": "Generate an excited response about matching with someone cool. Return JSON with 2-4 messages.",
     }
 
@@ -323,48 +335,25 @@ def generate_catchy_message(prompt_type="initial", user_message: str = None,
                 interest_context = f"\n\nYou know this user is into: {interests_str}. Reference these interests naturally when relevant."
             
             messages = [
-                {"role": "system", "content": JADA_PROMPT + voice_note + interest_context + "\n\nIMPORTANT: Understand what the user is asking. Answer questions DIRECTLY and clearly. If it's a simple question (like math, facts), answer it directly. If they need current information, facts, or real-time data, use web_search function. Then give them a meaningful answer based on the search results, not just generic responses."}
+                {"role": "system", "content": JADA_PROMPT + voice_note + interest_context + "\n\nIMPORTANT: Understand what the user is asking. Answer questions DIRECTLY and clearly. If it's a simple question (like math, facts), answer it directly. Give them a meaningful answer, not just generic responses."}
             ]
             
             # Add conversation history if available
             if conversation_history:
                 messages.extend(conversation_history)
-                logger.debug(f"📚 Added {len(conversation_history)} messages from conversation history")
+                logger.debug(f"[HISTORY] Added {len(conversation_history)} messages from conversation history")
             
             # Build user message prompt
-            user_prompt_content = f"User message: {user_message}\n\nWhat are they asking? Generate a response in JSON format with 1-4 messages. If you need current info, use web_search first, then give a brief answer."
+            user_prompt_content = f"User message: {user_message}\n\nWhat are they asking? Generate a response in JSON format with 1-4 messages. Give a brief answer."
             if is_first_message and not known_interests:
                 user_prompt_content += " After answering, naturally ask what they're into (games, music, hobbies, etc.) in a chill way."
             messages.append({"role": "user", "content": user_prompt_content})
             
-            # Define the web_search function for OpenAI
-            tools = [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "web_search",
-                        "description": "Search the web for current information, facts, or answers to questions. Use this when the user asks about current events, facts, definitions, or anything that needs up-to-date information.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "query": {
-                                    "type": "string",
-                                    "description": "The search query to look up on the web. Make it specific and clear."
-                                }
-                            },
-                            "required": ["query"]
-                        }
-                    }
-                }
-            ]
-            
             try:
-                # First call - model decides if it needs to search
+                # Generate response without web search
                 response = client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=messages,
-                    tools=tools,
-                    tool_choice="auto",  # Let model decide if it needs to search
                     temperature=0.8,
                     max_tokens=200,  # Allow for JSON format
                     timeout=15
@@ -372,46 +361,11 @@ def generate_catchy_message(prompt_type="initial", user_message: str = None,
                 
                 message = response.choices[0].message
                 
-                # Check if model wants to call a function
-                if message.tool_calls:
-                    for tool_call in message.tool_calls:
-                        if tool_call.function.name == "web_search":
-                            # Extract query
-                            import json
-                            args = json.loads(tool_call.function.arguments)
-                            search_query = args.get("query", user_message)
-                            
-                            logger.info(f"🔍 Performing web search: {search_query}")
-                            
-                            # Execute web search
-                            search_results = web_search(search_query)
-                            
-                            # Add function result to messages and get final response
-                            messages.append(message)
-                            messages.append({
-                                "role": "tool",
-                                "tool_call_id": tool_call.id,
-                                "name": "web_search",
-                                "content": search_results
-                            })
-                            
-                            # Get final response with search results (history already included in messages)
-                            final_response = client.chat.completions.create(
-                                model="gpt-4o-mini",
-                                messages=messages,
-                                temperature=0.8,
-                                max_tokens=200,  # Allow for JSON format
-                                timeout=15
-                            )
-                            
-                            result = final_response.choices[0].message.content.strip()
-                            logger.info(f"Generated response with web search results")
-                            parsed = parse_jada_response(result)
-                            return add_music_link_if_applicable(parsed, known_interests, prompt_type)
-                
-                # No function call needed, return regular response
-                parsed = parse_jada_response(message.content.strip())
-                return add_music_link_if_applicable(parsed, known_interests, prompt_type)
+                # No function calling - just get the response
+                result = response.choices[0].message.content.strip()
+                logger.debug(f"Generated {prompt_type} message: {result}")
+                parsed = parse_jada_response(result)
+                return add_music_link_if_applicable(parsed, known_interests, prompt_type, user_message)
                 
             except Exception as e:
                 logger.warning(f"Error with function calling: {e}, falling back to regular generation")
@@ -443,7 +397,7 @@ def generate_catchy_message(prompt_type="initial", user_message: str = None,
             # Add conversation history if available
             if conversation_history:
                 messages.extend(conversation_history)
-                logger.debug(f"📚 Added {len(conversation_history)} messages from conversation history")
+                logger.debug(f"[HISTORY] Added {len(conversation_history)} messages from conversation history")
             
             # Build user message prompt
             user_prompt_content = f"User said: {user_message}\n\nRead this carefully. If they asked a question, ANSWER IT DIRECTLY. If it's simple (like math, facts), just give the answer. If they're asking how you are, respond naturally. Return your response in JSON format with 1-4 messages."
@@ -470,7 +424,7 @@ def generate_catchy_message(prompt_type="initial", user_message: str = None,
         message = response.choices[0].message.content.strip()
         logger.debug(f"Generated {prompt_type} message: {message}")
         parsed = parse_jada_response(message)
-        return add_music_link_if_applicable(parsed, known_interests, prompt_type)
+        return add_music_link_if_applicable(parsed, known_interests, prompt_type, user_message)
     except Exception as e:
         logger.warning(f"Error generating message: {e}, using fallback")
         # Fallback messages - still try to be meaningful (return as single message list)
@@ -594,7 +548,7 @@ Return ONLY the JSON array, nothing else. No explanations."""
                         interests = [m for m in matches if len(m) > 2]  # Filter out short words
                         break
         
-        logger.info(f"🎯 Extracted interests: {interests}")
+        logger.info(f"[INTEREST] Extracted interests: {interests}")
         return interests
         
     except Exception as e:
@@ -608,7 +562,7 @@ Return ONLY the JSON array, nothing else. No explanations."""
             if match:
                 interest = match.group(1)
                 if len(interest) > 2:  # Filter out short words
-                    logger.info(f"🎯 Fallback extracted interest: {interest}")
+                    logger.info(f"[INTEREST] Fallback extracted interest: {interest}")
                     return [interest]
         except:
             pass

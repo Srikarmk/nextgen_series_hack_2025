@@ -5,8 +5,8 @@ Prevents duplicate responses when running multiple instances
 """
 
 import json
-import logging
 import signal
+import socket
 import sys
 import time
 import hashlib
@@ -15,6 +15,7 @@ from typing import Optional, Dict, Any
 from kafka import KafkaConsumer
 from kafka.errors import KafkaError
 
+from app_logger import logger
 from config import (
     SENDER_NUMBER,
     RECIPIENT_NUMBER,
@@ -30,21 +31,6 @@ from config import (
 from agent import generate_catchy_message
 from api_client import api_client
 from message_processor import process_message, handle_message_and_reply
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-logger = logging.getLogger(__name__)
-
-# Reduce verbosity of third-party libraries
-logging.getLogger('kafka').setLevel(logging.WARNING)
-logging.getLogger('kafka.conn').setLevel(logging.WARNING)
-logging.getLogger('kafka.consumer').setLevel(logging.WARNING)
-logging.getLogger('kafka.coordinator').setLevel(logging.WARNING)
-logging.getLogger('httpx').setLevel(logging.WARNING)
 
 # Global shutdown flag for graceful termination
 shutdown_flag = False
@@ -142,6 +128,22 @@ def generate_message_id(chat_id: str, from_phone: str, text: str, timestamp: str
 
 def create_consumer():
     """Create and return a Kafka consumer with proper configuration"""
+    # Ensure consumer group is set and consistent
+    if not KAFKA_CONSUMER_GROUP:
+        raise ValueError("KAFKA_CONSUMER_GROUP must be set in environment variables")
+    
+    # Normalize consumer group (remove whitespace, ensure it's a string)
+    consumer_group = str(KAFKA_CONSUMER_GROUP).strip()
+    
+    # Generate a unique client_id for this consumer instance (helps with debugging)
+    hostname = socket.gethostname()
+    client_id = f"{consumer_group}-{hostname}-{int(time.time())}"
+    
+    logger.info(f"[KAFKA] Creating consumer with:")
+    logger.info(f"Consumer Group: {consumer_group}")
+    logger.info(f"Topic: {KAFKA_TOPIC}")
+    logger.info(f"Client ID: {client_id}")
+    
     return KafkaConsumer(
         KAFKA_TOPIC,
         bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS.split(','),
@@ -152,7 +154,8 @@ def create_consumer():
         value_deserializer=lambda m: json.loads(m.decode('utf-8')),
         auto_offset_reset='earliest',
         enable_auto_commit=False,  # Manual commit for reliability
-        group_id=KAFKA_CONSUMER_GROUP,
+        group_id=consumer_group,  # Always use the same consumer group
+        client_id=client_id,  # Unique client ID for this instance
         # Connection and timeout settings for reliability
         # request_timeout_ms must be > session_timeout_ms
         request_timeout_ms=40000,  # 40 seconds (must be > session_timeout)
@@ -188,12 +191,12 @@ def process_message_with_lock(event: Dict[str, Any], message_count: int) -> bool
     timestamp = event.get('created_at', '')
     
     if not from_phone:
-        logger.warning(f"⚠️  Message #{message_count} - Missing from_phone, skipping")
+        logger.warning(f"[WARN] Message #{message_count} - Missing from_phone, skipping")
         return True
     
     # Skip messages from the bot itself
     if from_phone == SENDER_NUMBER:
-        logger.debug(f"⏭️  Message #{message_count} - Skipping message from bot itself")
+        logger.debug(f"[SKIP] Message #{message_count} - Skipping message from bot itself")
         return True
     
     # Normalize phone number for comparison (remove +, spaces, dashes)
@@ -203,9 +206,9 @@ def process_message_with_lock(event: Dict[str, Any], message_count: int) -> bool
     # Optional: Log if message is from allowed recipients (for debugging)
     if ALLOWED_RECIPIENTS:
         if normalized_from_phone in normalized_allowed:
-            logger.info(f"✅ Message #{message_count} - From allowed recipient: {from_phone}")
+            logger.info(f"[OK] Message #{message_count} - From allowed recipient: {from_phone}")
         else:
-            logger.debug(f"📱 Message #{message_count} - From: {from_phone} (not in allowed list, but processing anyway)")
+            logger.debug(f"[MSG] Message #{message_count} - From: {from_phone} (not in allowed list, but processing anyway)")
     
     # Generate unique message ID for deduplication (use API message ID if available)
     msg_id = generate_message_id(str(chat_id), from_phone, message_text or "", timestamp, message_id)
@@ -219,10 +222,10 @@ def process_message_with_lock(event: Dict[str, Any], message_count: int) -> bool
     
     except RuntimeError as lock_error:
         # Message already being processed or was processed
-        logger.info(f"⏭️  Message #{message_count} - Skipping (already processed): {lock_error}")
+        logger.info(f"[SKIP] Message #{message_count} - Skipping (already processed): {lock_error}")
         return True  # Not an error, just duplicate
     except Exception as process_error:
-        logger.error(f"❌ Message #{message_count} - Error processing: {process_error}", exc_info=True)
+        logger.error(f"[ERROR] Message #{message_count} - Error processing: {process_error}", exc_info=True)
         return False
 
 
@@ -237,9 +240,9 @@ def listen_and_auto_reply():
     logger.info(f"Connecting to Kafka topic: {KAFKA_TOPIC}")
     logger.info(f"Auto-replying to messages from everyone")
     if ALLOWED_RECIPIENTS:
-        logger.info(f"📱 Allowed recipients (for logging): {', '.join(ALLOWED_RECIPIENTS)}")
+        logger.info(f"[CONFIG] Allowed recipients (for logging): {', '.join(ALLOWED_RECIPIENTS)}")
     else:
-        logger.info(f"📱 No recipient filter - processing all messages")
+        logger.info(f"[CONFIG] No recipient filter - processing all messages")
 
     retry_delay = 5  # seconds
     max_retry_delay = 60  # Maximum retry delay
@@ -256,8 +259,9 @@ def listen_and_auto_reply():
                 logger.info("Initializing Kafka consumer...")
                 try:
                     consumer = create_consumer()
-                    logger.info("Connected to Kafka successfully")
-                    logger.info("Listening for messages from everyone")
+                    logger.info("[OK] Connected to Kafka successfully")
+                    logger.info(f"[OK] Consumer Group: {KAFKA_CONSUMER_GROUP}")
+                    logger.info("[LISTEN] Listening for messages from everyone...")
                     last_heartbeat = time.time()
                     consecutive_errors = 0  # Reset error counter on successful connection
                 except Exception as e:
@@ -276,7 +280,7 @@ def listen_and_auto_reply():
                 message_batch = consumer.poll(timeout_ms=1000, max_records=50)
                 
                 if message_batch:
-                    logger.info(f"📦 Received batch with {sum(len(msgs) for msgs in message_batch.values())} message(s)")
+                    logger.info(f"[BATCH] Received batch with {sum(len(msgs) for msgs in message_batch.values())} message(s)")
                     
                     # Process each partition's messages
                     processed_count = 0
@@ -303,17 +307,17 @@ def listen_and_auto_reply():
                                 else:
                                     failed_count += 1
                                     all_succeeded = False
-                                    logger.warning(f"⚠️  Message #{message_count} processing returned False")
+                                    logger.warning(f"[WARN] Message #{message_count} processing returned False")
                                     # Continue processing other messages, but mark batch as incomplete
                                 
                             except RuntimeError as lock_error:
                                 # Message already processed by another instance - safe to count as processed
-                                logger.debug(f"⏭️  Message #{message_count} - Already processed: {lock_error}")
+                                logger.debug(f"[SKIP] Message #{message_count} - Already processed: {lock_error}")
                                 processed_count += 1
                             except Exception as msg_error:
                                 failed_count += 1
                                 all_succeeded = False
-                                logger.error(f"❌ Exception processing message #{message_count}: {msg_error}", exc_info=True)
+                                logger.error(f"[ERROR] Exception processing message #{message_count}: {msg_error}", exc_info=True)
                                 # Continue processing other messages
                     
                     # Commit offsets - be more permissive to avoid getting stuck
@@ -323,13 +327,13 @@ def listen_and_auto_reply():
                         try:
                             consumer.commit()
                             if all_succeeded:
-                                logger.info(f"✅ Committed offsets - Processed: {processed_count}, Failed: {failed_count}")
+                                logger.info(f"[OK] Committed offsets (Consumer Group: {KAFKA_CONSUMER_GROUP}) - Processed: {processed_count}, Failed: {failed_count}")
                             else:
-                                logger.info(f"✅ Committed offsets (some failed) - Processed: {processed_count}, Failed: {failed_count} (failed will retry)")
+                                logger.info(f"[OK] Committed offsets (Consumer Group: {KAFKA_CONSUMER_GROUP}) - Processed: {processed_count}, Failed: {failed_count} (failed will retry)")
                         except Exception as commit_error:
-                            logger.error(f"❌ Error committing offsets: {commit_error}", exc_info=True)
+                            logger.error(f"[ERROR] Error committing offsets (Consumer Group: {KAFKA_CONSUMER_GROUP}): {commit_error}", exc_info=True)
                     elif failed_count > 0:
-                        logger.warning(f"⚠️  Not committing offsets - all {failed_count} message(s) failed, will retry on next poll")
+                        logger.warning(f"[WARN] Not committing offsets - all {failed_count} message(s) failed, will retry on next poll")
                     else:
                         logger.debug("No messages to commit")
                 else:
@@ -422,30 +426,11 @@ def main():
     else:
         logger.info("Recipient: Anyone (bot will respond to first message)")
     logger.info(f"Lock mode: {'Distributed (Redis)' if USE_REDIS else 'Local (single instance)'}")
+    logger.info(f"Kafka Consumer Group: {KAFKA_CONSUMER_GROUP}")
+    logger.info(f"Kafka Topic: {KAFKA_TOPIC}")
 
-    # Optional: Send initial message if RECIPIENT_NUMBER is set
-    if RECIPIENT_NUMBER:
-        logger.info("Generating catchy Gen Z message...")
-        try:
-            message_list = generate_catchy_message("initial")
-            # Handle list return - take first message for initial greeting
-            if isinstance(message_list, list):
-                message = message_list[0] if message_list else "hey! what's up?"
-            else:
-                message = message_list
-            logger.info(f"Generated message: {message}")
-            
-            logger.info(f"Sending initial message to {RECIPIENT_NUMBER}...")
-            result = api_client.create_chat([RECIPIENT_NUMBER], message, SENDER_NUMBER)
-            
-            if result:
-                logger.info("Initial message sent successfully.")
-            else:
-                logger.warning("Failed to send initial message, but continuing to listen...")
-        except Exception as e:
-            logger.warning(f"Failed to send initial message: {e}, but continuing to listen...")
-    else:
-        logger.info("No RECIPIENT_NUMBER set - waiting for users to text first...")
+    # Bot will wait for users to text first (no initial message)
+    logger.info("Waiting for users to text first...")
     
     # Start listening and auto-replying (responds to anyone who texts)
     logger.info("Starting listener - will respond to anyone who texts...")

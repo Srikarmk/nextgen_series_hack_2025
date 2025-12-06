@@ -2,16 +2,14 @@
 Audio Processing Module
 Handles voice message transcription (STT) and text-to-speech (TTS)
 """
-import logging
 import base64
 import tempfile
 import os
 import requests
 from typing import Optional
 from openai import OpenAI
+from app_logger import logger
 from config import OPENAI_API_KEY, SERIES_API_KEY
-
-logger = logging.getLogger(__name__)
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 # Try to import pydub for audio conversion (optional)
@@ -95,7 +93,7 @@ def transcribe_audio(base64_data: str, mime_type: str = 'audio/m4a') -> Optional
         logger.debug(f"📁 Created temp file: {temp_file_path}, size: {file_size} bytes")
         
         if file_size == 0:
-            logger.error("❌ Audio file is empty (0 bytes)")
+            logger.error("[ERROR] Audio file is empty (0 bytes)")
             try:
                 os.unlink(temp_file_path)
             except:
@@ -141,12 +139,12 @@ def transcribe_audio(base64_data: str, mime_type: str = 'audio/m4a') -> Optional
                             response_format="text"
                         )
                     
-                    logger.debug(f"🔍 Raw transcript type: {type(transcript)}, value: {repr(transcript)}")
+                    logger.debug(f"[DEBUG] Raw transcript type: {type(transcript)}, value: {repr(transcript)}")
                     transcribed_text = transcript.strip() if isinstance(transcript, str) else str(transcript).strip()
-                    logger.debug(f"🔍 After strip: {repr(transcribed_text)}, length: {len(transcribed_text)}")
+                    logger.debug(f"[DEBUG] After strip: {repr(transcribed_text)}, length: {len(transcribed_text)}")
                     
                     if transcribed_text:
-                        logger.info(f"✅ Transcribed audio: {transcribed_text[:100]}...")
+                        logger.info(f"[OK] Transcribed audio: {transcribed_text[:100]}...")
                         # Clean up any alternate files
                         if file_path != temp_file_path and os.path.exists(file_path):
                             try:
@@ -155,19 +153,19 @@ def transcribe_audio(base64_data: str, mime_type: str = 'audio/m4a') -> Optional
                                 pass
                         return transcribed_text
                     else:
-                        logger.warning(f"⚠️  Transcription returned empty string - audio might be silent or unclear")
+                        logger.warning(f"[WARN]  Transcription returned empty string - audio might be silent or unclear")
                         continue
                         
                 except Exception as whisper_error:
                     error_str = str(whisper_error)
                     # Check if it's a format error
                     if "Invalid file format" in error_str or "400" in error_str:
-                        logger.debug(f"⚠️  Whisper rejected {strategy_name}: {error_str[:200]}")
+                        logger.debug(f"[WARN]  Whisper rejected {strategy_name}: {error_str[:200]}")
                         last_error = whisper_error
                         continue
                     else:
                         # Other errors, log and continue to next strategy
-                        logger.debug(f"⚠️  Whisper error with {strategy_name}: {error_str[:200]}")
+                        logger.debug(f"[WARN]  Whisper error with {strategy_name}: {error_str[:200]}")
                         last_error = whisper_error
                         continue
                         
@@ -177,7 +175,7 @@ def transcribe_audio(base64_data: str, mime_type: str = 'audio/m4a') -> Optional
                 continue
         
         # If all direct strategies failed, try pydub conversion (if available and ffmpeg is installed)
-        logger.warning(f"⚠️  All direct transcription attempts failed. Attempting audio conversion...")
+        logger.warning(f"[WARN]  All direct transcription attempts failed. Attempting audio conversion...")
         
         if PYDUB_AVAILABLE:
             try:
@@ -189,7 +187,7 @@ def transcribe_audio(base64_data: str, mime_type: str = 'audio/m4a') -> Optional
                     wav_path = temp_file_path.rsplit('.', 1)[0] + '.wav'
                     audio.export(wav_path, format="wav")
                     created_files.append(wav_path)  # Track for cleanup
-                    logger.info(f"✅ Converted to WAV: {wav_path}")
+                    logger.info(f"[OK] Converted to WAV: {wav_path}")
                     
                     # Try transcribing the converted file
                     with open(wav_path, 'rb') as wav_file:
@@ -197,7 +195,7 @@ def transcribe_audio(base64_data: str, mime_type: str = 'audio/m4a') -> Optional
                         logger.debug(f"📁 WAV file size: {wav_size} bytes")
                         
                         if wav_size == 0:
-                            logger.warning("⚠️  Converted WAV file is empty")
+                            logger.warning("[WARN]  Converted WAV file is empty")
                             try:
                                 os.unlink(wav_path)
                             except:
@@ -211,9 +209,9 @@ def transcribe_audio(base64_data: str, mime_type: str = 'audio/m4a') -> Optional
                             response_format="text"
                         )
                     
-                    logger.debug(f"🔍 Raw transcript type: {type(transcript)}, value: {repr(transcript)}")
+                    logger.debug(f"[DEBUG] Raw transcript type: {type(transcript)}, value: {repr(transcript)}")
                     transcribed_text = transcript.strip() if isinstance(transcript, str) else str(transcript).strip()
-                    logger.debug(f"🔍 After strip: {repr(transcribed_text)}, length: {len(transcribed_text)}")
+                    logger.debug(f"[DEBUG] After strip: {repr(transcribed_text)}, length: {len(transcribed_text)}")
                     
                     # Clean up converted file
                     try:
@@ -222,29 +220,29 @@ def transcribe_audio(base64_data: str, mime_type: str = 'audio/m4a') -> Optional
                         pass
                     
                     if transcribed_text:
-                        logger.info(f"✅ Transcribed converted audio: {transcribed_text[:100]}...")
+                        logger.info(f"[OK] Transcribed converted audio: {transcribed_text[:100]}...")
                         return transcribed_text
                     else:
-                        logger.warning(f"⚠️  Transcription returned empty string after conversion")
+                        logger.warning(f"[WARN]  Transcription returned empty string after conversion")
                         return None
                         
                 except FileNotFoundError as ffmpeg_error:
-                    logger.warning(f"⚠️  ffmpeg/ffprobe not found. Audio conversion unavailable. Install ffmpeg or add it to PATH.")
+                    logger.warning(f"[WARN]  ffmpeg/ffprobe not found. Audio conversion unavailable. Install ffmpeg or add it to PATH.")
                     logger.warning(f"   Error: {ffmpeg_error}")
                     # Continue to final cleanup
                 except Exception as convert_error:
-                    logger.error(f"❌ Audio conversion failed: {convert_error}")
+                    logger.error(f"[ERROR] Audio conversion failed: {convert_error}")
                     # Continue to final cleanup
             except Exception as pydub_error:
-                logger.warning(f"⚠️  pydub conversion failed: {pydub_error}")
+                logger.warning(f"[WARN]  pydub conversion failed: {pydub_error}")
         else:
-            logger.warning("⚠️  pydub not available for audio conversion")
+            logger.warning("[WARN]  pydub not available for audio conversion")
         
         # All strategies failed
         if last_error:
-            logger.error(f"❌ All transcription strategies failed. Last error: {last_error}")
+            logger.error(f"[ERROR] All transcription strategies failed. Last error: {last_error}")
         else:
-            logger.error(f"❌ All transcription strategies failed (no specific error captured)")
+            logger.error(f"[ERROR] All transcription strategies failed (no specific error captured)")
         
         return None
             
@@ -303,7 +301,7 @@ def text_to_speech(text: str, voice: str = "alloy", format: str = "m4a") -> Opti
         )
         
         audio_data = response.content
-        logger.info(f"✅ Generated speech audio ({len(audio_data)} bytes, format: {format})")
+        logger.info(f"[OK] Generated speech audio ({len(audio_data)} bytes, format: {format})")
         
         return (audio_data, mime_type, filename)
         
@@ -325,7 +323,7 @@ def download_audio_from_url(url: str, mime_type: str = 'audio/m4a', api_key: str
         str: Base64-encoded audio data, or None if failed
     """
     try:
-        logger.info(f"📥 Downloading audio from URL: {url}")
+        logger.info(f"[DOWNLOAD] Downloading audio from URL: {url}")
         
         # Prepare headers with API key if provided
         headers = {}
@@ -337,10 +335,10 @@ def download_audio_from_url(url: str, mime_type: str = 'audio/m4a', api_key: str
         
         audio_bytes = response.content
         base64_data = base64.b64encode(audio_bytes).decode('utf-8')
-        logger.info(f"✅ Downloaded {len(audio_bytes)} bytes, encoded to base64")
+        logger.info(f"[OK] Downloaded {len(audio_bytes)} bytes, encoded to base64")
         return base64_data
     except Exception as e:
-        logger.error(f"❌ Error downloading audio from URL: {e}", exc_info=True)
+        logger.error(f"[ERROR] Error downloading audio from URL: {e}", exc_info=True)
         return None
 
 
@@ -355,17 +353,17 @@ def process_voice_message(attachments: list) -> Optional[str]:
         str: Transcribed text from first audio attachment, or None
     """
     if not attachments:
-        logger.warning("⚠️  No attachments provided to process_voice_message")
+        logger.warning("[WARN]  No attachments provided to process_voice_message")
         return None
     
-    logger.info(f"🎤 Processing {len(attachments)} attachment(s) for transcription...")
+    logger.info(f"[AUDIO] Processing {len(attachments)} attachment(s) for transcription...")
     
     # Find first audio attachment
     for i, attachment in enumerate(attachments):
-        logger.debug(f"🎤 Checking attachment #{i+1}: {attachment.get('filename', 'unknown')}")
+        logger.debug(f"[AUDIO] Checking attachment #{i+1}: {attachment.get('filename', 'unknown')}")
         
         if is_audio_attachment(attachment):
-            logger.info(f"🎤 Found audio attachment: {attachment.get('filename')}")
+            logger.info(f"[AUDIO] Found audio attachment: {attachment.get('filename')}")
             base64_data = attachment.get('data_base64')
             mime_type = attachment.get('mime_type', 'audio/m4a')
             
@@ -374,23 +372,23 @@ def process_voice_message(attachments: list) -> Optional[str]:
                 # Check for URL fields
                 attachment_url = attachment.get('url') or attachment.get('download_url') or attachment.get('file_url') or attachment.get('attachment_url')
                 if attachment_url:
-                    logger.info(f"🎤 No base64 data, trying to download from URL: {attachment_url}")
+                    logger.info(f"[AUDIO] No base64 data, trying to download from URL: {attachment_url}")
                     # Use Series API key for authentication
                     base64_data = download_audio_from_url(attachment_url, mime_type, api_key=SERIES_API_KEY)
             
             if base64_data:
-                logger.info(f"🎤 Attempting transcription with mime_type: {mime_type}, data length: {len(base64_data)}")
+                logger.info(f"[AUDIO] Attempting transcription with mime_type: {mime_type}, data length: {len(base64_data)}")
                 result = transcribe_audio(base64_data, mime_type)
                 if result:
-                    logger.info(f"🎤 ✅ Transcription successful: {result[:50]}...")
+                    logger.info(f"[AUDIO] [OK] Transcription successful: {result[:50]}...")
                 else:
-                    logger.warning(f"🎤 ❌ Transcription returned None")
+                    logger.warning(f"[AUDIO] [ERROR] Transcription returned None")
                 return result
             else:
-                logger.warning(f"🎤 ⚠️  Audio attachment has no data_base64 or downloadable URL")
+                logger.warning(f"[AUDIO] [WARN]  Audio attachment has no data_base64 or downloadable URL")
         else:
-            logger.debug(f"🎤 Attachment #{i+1} is not audio (mime: {attachment.get('mime_type', 'unknown')})")
+            logger.debug(f"[AUDIO] Attachment #{i+1} is not audio (mime: {attachment.get('mime_type', 'unknown')})")
     
-    logger.warning("⚠️  No audio attachments found or no base64 data available")
+    logger.warning("[WARN]  No audio attachments found or no base64 data available")
     return None
 

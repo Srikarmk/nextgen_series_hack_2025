@@ -1,24 +1,40 @@
 """
 Advanced Group Chat Handler
 Comprehensive Gen Z native features for group chats
+Uses head agent pattern with tools.json for tool selection
 """
-import logging
 import time
 import random
 import json
+import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, Set, Any
 from collections import defaultdict, deque
+from app_logger import logger
 from agent import generate_catchy_message
 from api_client import api_client
+from openai import OpenAI
+from config import OPENAI_API_KEY
 
-logger = logging.getLogger(__name__)
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 
 class GroupChatHandler:
     """Advanced group chat handler with vibe detection, lore, and social features"""
     
     def __init__(self):
+        # Load group tools from tools.json
+        tools_path = os.path.join(os.path.dirname(__file__), "tools.json")
+        try:
+            with open(tools_path, 'r') as f:
+                tools_data = json.load(f)
+                # Load only group tools, not 1-on-1 tools
+                self.tools = {tool['id']: tool for tool in tools_data.get('group_tools', [])}
+                logger.info(f"[TOOLS] Loaded {len(self.tools)} group tools from tools.json")
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to load tools.json: {e}")
+            self.tools = {}
+        
         # Message tracking
         self.recent_messages: Dict[int, deque] = {}  # chat_id -> deque of messages
         self.max_messages = 200  # Keep more messages for lore
@@ -99,9 +115,95 @@ class GroupChatHandler:
         messages = list(self.recent_messages[chat_id])
         return messages[-limit:]
     
+    def _build_tool_functions(self) -> list:
+        """Build OpenAI function definitions from tools.json"""
+        functions = []
+        for tool_id, tool in self.tools.items():
+            if tool.get('auto_trigger', False):
+                continue  # Skip auto-triggered tools
+            
+            # Build function schema
+            properties = {
+                "chat_id": {
+                    "type": "integer",
+                    "description": "The chat ID where the message was sent"
+                }
+            }
+            required = ["chat_id"]
+            
+            # Add tool-specific parameters
+            if tool_id == "roast":
+                properties["target"] = {
+                    "type": "string",
+                    "description": "The person or thing to roast (extracted from message)"
+                }
+                properties["from_phone"] = {
+                    "type": "string",
+                    "description": "Phone number of the user requesting the roast"
+                }
+                required.extend(["target", "from_phone"])
+            elif tool_id == "hype_train":
+                properties["target"] = {
+                    "type": "string",
+                    "description": "The person to hype up (extracted from message)"
+                }
+                required.append("target")
+            elif tool_id == "generate_catchup":
+                properties["from_phone"] = {
+                    "type": "string",
+                    "description": "Phone number of the user requesting catchup"
+                }
+                required.append("from_phone")
+            elif tool.get('extract_topic'):
+                properties["topic"] = {
+                    "type": "string",
+                    "description": f"Topic extracted from the message (for {tool.get('name', tool_id)})"
+                }
+                required.append("topic")
+            elif tool_id in ["pin_core_memory"]:
+                properties["message_text"] = {
+                    "type": "string",
+                    "description": "The full message text for context"
+                }
+                required.append("message_text")
+            
+            # Build comprehensive description for LLM
+            description_parts = [tool.get('description', '')]
+            
+            # Add when_to_use if available
+            if tool.get('when_to_use'):
+                description_parts.append(f"When to use: {tool.get('when_to_use')}")
+            
+            # Add user_intent_patterns if available
+            if tool.get('user_intent_patterns'):
+                patterns = ', '.join(tool.get('user_intent_patterns', []))
+                description_parts.append(f"User intent patterns: {patterns}")
+            
+            # Add example if available
+            if tool.get('example_usage'):
+                description_parts.append(f"Example: {tool.get('example_usage')}")
+            
+            full_description = " ".join(description_parts)
+            
+            functions.append({
+                "type": "function",
+                "function": {
+                    "name": tool_id,
+                    "description": full_description,
+                    "parameters": {
+                        "type": "object",
+                        "properties": properties,
+                        "required": required
+                    }
+                }
+            })
+        
+        return functions
+    
     def should_respond(self, chat_id: int, message_text: str, from_phone: str) -> Tuple[bool, str, Optional[str]]:
         """
-        Determine if bot should respond and what to respond with
+        Head Agent: Uses LLM to intelligently select which tool to call
+        Uses OpenAI function calling instead of text matching
         
         Returns:
             (should_respond: bool, reason: str, response_text: Optional[str])
@@ -111,113 +213,209 @@ class GroupChatHandler:
         
         text_lower = message_text.lower().strip()
         
-        # ===== VIBE & MOOD TRIGGERS =====
-        if any(phrase in text_lower for phrase in ["vibe check", "what's the vibe", "how's the vibe"]):
-            vibe = self.check_vibe(chat_id)
-            return (True, "vibe_check", vibe)
+        # Get recent messages for context
+        recent_messages = self.get_recent_messages(chat_id, limit=5)
+        context = " | ".join([m['text'][:100] for m in recent_messages[-3:] if not m.get('is_bot', False)])
         
-        if any(phrase in text_lower for phrase in ["aura", "what's the aura", "read the aura"]):
-            aura = self.read_aura(chat_id)
-            return (True, "aura_reading", aura)
+        # Build tool functions for OpenAI
+        tools = self._build_tool_functions()
         
-        # ===== LORE TRIGGERS =====
-        if "what's the lore" in text_lower or "lore on" in text_lower:
-            # Extract topic
-            topic = self._extract_topic(text_lower, ["what's the lore", "lore on"])
-            lore_entry = self.get_lore(chat_id, topic)
-            return (True, "lore_request", lore_entry)
+        if not tools:
+            logger.warning("[TOOLS] No tools available for LLM selection")
+            return (False, "no_tools", None)
         
-        if any(phrase in text_lower for phrase in ["previously on", "catch me up", "what did i miss"]):
-            catchup = self.generate_catchup(chat_id, from_phone)
-            return (True, "catchup_request", catchup)
+        # Prepare system message with detailed tool descriptions from tools.json
+        system_prompt = """You are Jada, an AI assistant for group chats. Your job is to understand what the user wants and select the appropriate tool/function to call.
+
+You have access to various group chat tools. Read the tool descriptions carefully and understand when to use each one. The tool descriptions include detailed information about user intent patterns, when to use each tool, and examples.
+
+IMPORTANT: 
+- Read each tool's description, when_to_use, and user_intent_patterns to understand when to call it
+- Users might phrase things differently than exact triggers - understand the intent
+- Extract parameters from messages (e.g., who to roast, what to compare, what topic for lore)
+- If the message doesn't match any tool intent, don't call any function (return null)
+- Be smart about understanding context and user intent
+
+The available tools are defined in the function definitions below. Each tool has a detailed description explaining when and how to use it."""
         
-        if "core memory" in text_lower or "pin this" in text_lower:
-            # Try to pin current conversation as core memory
-            memory = self.pin_core_memory(chat_id, message_text)
-            return (True, "core_memory_pin", memory)
+        # Prepare user message with context
+        user_message = f"User message: {message_text}"
+        if context:
+            user_message += f"\n\nRecent context: {context}"
         
-        # ===== DECISION & COORDINATION =====
-        if any(phrase in text_lower for phrase in ["spin the wheel", "chaos wheel", "random pick"]):
-            result = self.spin_chaos_wheel(chat_id, message_text)
-            return (True, "chaos_wheel", result)
+        try:
+            # Call OpenAI with function calling
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message}
+                ],
+                tools=tools,
+                tool_choice="auto",  # Let model decide
+                temperature=0.3,  # Lower temperature for more consistent tool selection
+                max_tokens=150,
+                timeout=10
+            )
+            
+            message = response.choices[0].message
+            
+            # Check if model wants to call a function
+            if message.tool_calls:
+                for tool_call in message.tool_calls:
+                    tool_id = tool_call.function.name
+                    
+                    if tool_id not in self.tools:
+                        logger.warning(f"[TOOLS] LLM selected unknown tool: {tool_id}")
+                        continue
+                    
+                    tool = self.tools[tool_id]
+                    method_name = tool.get('method')
+                    
+                    if not method_name or not hasattr(self, method_name):
+                        logger.warning(f"[TOOLS] Tool {tool_id} has invalid method: {method_name}")
+                        continue
+                    
+                    method = getattr(self, method_name)
+                    
+                    # Parse arguments from LLM
+                    import json
+                    try:
+                        args = json.loads(tool_call.function.arguments)
+                    except json.JSONDecodeError as e:
+                        logger.error(f"[ERROR] Failed to parse tool arguments: {e}")
+                        continue
+                    
+                    # Call the method with parsed arguments
+                    try:
+                        # Handle special cases based on tool configuration
+                        if tool_id == "roast":
+                            result = method(chat_id, args.get('target', ''), args.get('from_phone', from_phone))
+                        elif tool_id == "hype_train":
+                            result = method(chat_id, args.get('target', ''))
+                        elif tool_id == "generate_catchup":
+                            result = method(chat_id, args.get('from_phone', from_phone))
+                        elif tool_id == "context_aware_versus":
+                            # Handle context-aware versus - create generic comparison without using exact names
+                            # Just create a fun generic versus when user says "compare both"
+                            try:
+                                # Create a generic, fun versus topic without looking at specific messages
+                                generic_prompt = """Create a fun, generic "versus" comparison topic for a group chat. 
+                                Make it interesting and debatable. Examples: "Morning Person vs Night Owl", "Coffee vs Tea", "Beach vs Mountains", "Dogs vs Cats", "Summer vs Winter".
+                                
+                                Return ONLY: "topic1 vs topic2" (generic and fun, not specific to anything)"""
+                                
+                                comparison_text = generate_catchy_message("response", user_message=generic_prompt)
+                                if isinstance(comparison_text, list):
+                                    comparison_text = " ".join(comparison_text)
+                                
+                                # Extract the vs comparison
+                                if " vs " in comparison_text.lower():
+                                    vs_index = comparison_text.lower().find(" vs ")
+                                    topics = [
+                                        comparison_text[:vs_index].strip(),
+                                        comparison_text[vs_index + 4:].strip()
+                                    ]
+                                    # Clean up topics (remove quotes, extra text)
+                                    topics = [t.strip('"\'.,!?').strip() for t in topics]
+                                    if len(topics) == 2 and topics[0] and topics[1]:
+                                        versus_text = f"{topics[0]} vs {topics[1]}"
+                                        result = method(chat_id, versus_text)
+                                        logger.info(f"[TOOLS] Context-aware versus (generic): {versus_text}")
+                                    else:
+                                        # Fallback to generic
+                                        result = method(chat_id, "Option 1 vs Option 2")
+                                else:
+                                    # Fallback to generic
+                                    result = method(chat_id, "Option 1 vs Option 2")
+                            except Exception as e:
+                                logger.error(f"[ERROR] Error creating generic versus: {e}")
+                                # Fallback to generic
+                                result = method(chat_id, "Option 1 vs Option 2")
+                        elif tool.get('extract_topic'):
+                            result = method(chat_id, args.get('topic', ''))
+                        elif 'message_text' in args:
+                            result = method(chat_id, args['message_text'])
+                        else:
+                            # Default: just chat_id
+                            result = method(chat_id)
+                        
+                        logger.info(f"[TOOLS] LLM selected tool: {tool_id} (method: {method_name})")
+                        return (True, tool_id, result)
+                    except Exception as e:
+                        logger.error(f"[ERROR] Error calling tool {tool_id}: {e}", exc_info=True)
+                        continue
+            
+            # No tool selected - normal chat
+            logger.debug(f"[TOOLS] LLM did not select any tool for: {message_text[:50]}")
+            return (False, "normal_chat", None)
+            
+        except Exception as e:
+            logger.error(f"[ERROR] Error in LLM tool selection: {e}", exc_info=True)
+            # Fallback: return normal chat if LLM fails
+            return (False, "llm_error", None)
         
-        if "anonymous vote" in text_lower or "anon vote" in text_lower:
-            result = self.start_anonymous_vote(chat_id, message_text)
-            return (True, "anonymous_vote", result)
-        
-        if "remind" in text_lower and ("every" in text_lower or "weekly" in text_lower or "daily" in text_lower):
-            result = self.set_accountability_ping(chat_id, message_text)
-            return (True, "accountability_ping", result)
-        
-        # ===== ENTERTAINMENT TRIGGERS =====
-        if text_lower.startswith("versus") or " vs " in text_lower:
-            result = self.start_versus(chat_id, message_text)
-            return (True, "versus", result)
-        
-        if "would you rather" in text_lower or "wyr" in text_lower:
-            result = self.would_you_rather(chat_id)
-            return (True, "would_you_rather", result)
-        
-        if text_lower.startswith("roast "):
-            target = text_lower.replace("roast ", "").strip()
-            result = self.roast(chat_id, target, from_phone)
-            return (True, "roast", result)
-        
-        if text_lower.startswith("hype ") or "hype up" in text_lower:
-            target = self._extract_name(text_lower)
-            result = self.hype_train(chat_id, target)
-            return (True, "hype_train", result)
-        
-        if "story mode" in text_lower or "start story" in text_lower:
-            result = self.start_story_mode(chat_id)
-            return (True, "story_mode", result)
-        
-        # ===== GAMIFICATION =====
-        if "achievements" in text_lower or "show achievements" in text_lower:
-            result = self.show_achievements(chat_id)
-            return (True, "achievements", result)
-        
-        if "trivia" in text_lower or "group trivia" in text_lower:
-            result = self.group_trivia(chat_id)
-            return (True, "trivia", result)
-        
-        if "prediction" in text_lower or "bet on" in text_lower:
-            result = self.create_prediction_market(chat_id, message_text)
-            return (True, "prediction_market", result)
-        
-        # ===== ACCESSIBILITY =====
-        if "translate" in text_lower and "to" in text_lower:
-            result = self.translate_message(chat_id, message_text)
-            return (True, "translation", result)
-        
-        # ===== AUTO FEATURES (passive) =====
-        # Auto vibe check if chat is dead
-        if self._is_chat_dead(chat_id):
-            vibe = self.check_vibe(chat_id)
-            if "dead" in vibe.lower() or "quiet" in vibe.lower():
-                return (True, "auto_vibe_check", vibe)
-        
-        # Auto ghost detection
-        ghost_check = self.check_ghosts(chat_id)
-        if ghost_check:
-            return (True, "ghost_detection", ghost_check)
-        
-        # Auto temperature check
-        if self._needs_temperature_check(chat_id):
-            temp_check = self.temperature_check(chat_id)
-            return (True, "temperature_check", temp_check)
-        
-        # Auto hype on celebrations
-        if chat_id in self.celebration_queue and self.celebration_queue[chat_id]:
-            celebration = self.celebration_queue[chat_id].pop(0)
-            hype = self.generate_hype(chat_id, celebration)
-            return (True, "auto_hype", hype)
-        
-        # Story mode continuation
-        if chat_id in self.story_mode_active and self.story_mode_active[chat_id]:
-            result = self.continue_story(chat_id, message_text, from_phone)
-            if result:
-                return (True, "story_continuation", result)
+        # Step 2: Check auto-triggered tools (passive features)
+        for tool_id, tool in self.tools.items():
+            if not tool.get('auto_trigger', False):
+                continue
+            
+            condition = tool.get('condition')
+            method_name = tool.get('method')
+            
+            if not method_name or not hasattr(self, method_name):
+                continue
+            
+            method = getattr(self, method_name)
+            
+            # Check condition
+            should_trigger = False
+            result = None
+            try:
+                if condition == "is_chat_dead":
+                    # Don't check for dead chat right after someone texts - wait at least 30 minutes
+                    # This prevents annoying "dead chat" messages right after someone starts texting
+                    recent_messages = self.get_recent_messages(chat_id, limit=3)
+                    if recent_messages:
+                        last_message = recent_messages[-1]
+                        last_message_time = last_message.get('timestamp', 0)
+                        time_since_last = time.time() - last_message_time
+                        # Only check for dead chat if last message was more than 30 minutes ago
+                        # This prevents triggering right after someone starts texting
+                        if time_since_last > 1800:  # 30 minutes
+                            if self._is_chat_dead(chat_id):
+                                result = method(chat_id)
+                                if result and ("dead" in result.lower() or "quiet" in result.lower()):
+                                    should_trigger = True
+                elif condition == "always":
+                    result = method(chat_id)
+                    if result:
+                        should_trigger = True
+                elif condition == "needs_temperature_check":
+                    if self._needs_temperature_check(chat_id):
+                        result = method(chat_id)
+                        should_trigger = True
+                elif condition == "has_celebration":
+                    if chat_id in self.celebration_queue and self.celebration_queue[chat_id]:
+                        celebration = self.celebration_queue[chat_id].pop(0)
+                        result = method(chat_id, celebration)
+                        if result:
+                            should_trigger = True
+                elif condition == "story_mode_active":
+                    if chat_id in self.story_mode_active and self.story_mode_active[chat_id]:
+                        result = method(chat_id, message_text, from_phone)
+                        if result:
+                            should_trigger = True
+                elif condition == "is_long_voice_message":
+                    # This is handled separately in message_processor
+                    continue
+                
+                if should_trigger:
+                    logger.info(f"[TOOLS] Auto-triggered tool: {tool_id} (method: {method_name})")
+                    return (True, tool_id, result)
+            except Exception as e:
+                logger.error(f"[ERROR] Error in auto-tool {tool_id}: {e}", exc_info=True)
+                continue
         
         # Default: don't respond to normal chat
         return (False, "normal_chat", None)
@@ -382,7 +580,7 @@ class GroupChatHandler:
             logger.error(f"Error generating catchup: {e}")
             return "while you were gone: stuff happened (couldn't generate full catchup)"
     
-    def pin_core_memory(self, chat_id: int, context: Optional[str] = None) -> str:
+    def pin_core_memory(self, chat_id: int, message_text: Optional[str] = None) -> str:
         """Pin a moment as a core memory"""
         if chat_id not in self.core_memories:
             self.core_memories[chat_id] = []
@@ -391,7 +589,7 @@ class GroupChatHandler:
         recent_context = " | ".join([m['text'][:50] for m in messages[-5:] if not m.get('is_bot', False)])
         
         memory = {
-            "description": context or recent_context,
+            "description": message_text or recent_context,
             "timestamp": time.time(),
             "votes": 1  # Auto-vote from requester
         }
@@ -399,117 +597,13 @@ class GroupChatHandler:
         self.core_memories[chat_id].append(memory)
         
         # Also add to lore
-        self.add_to_lore(chat_id, context or recent_context, "core memory")
+        self.add_to_lore(chat_id, message_text or recent_context, "core memory")
         
         return f"✨ pinned as core memory! (react to vote to save permanently)"
     
     # =========================================================================
     # DECISION & COORDINATION
     # =========================================================================
-    
-    def spin_chaos_wheel(self, chat_id: int, message_text: str) -> str:
-        """Spin the chaos wheel for random decisions"""
-        # Extract options from message
-        text_lower = message_text.lower()
-        
-        # Try to find options
-        if "between" in text_lower or "or" in text_lower:
-            # Simple extraction
-            parts = message_text.split(" or ")
-            if len(parts) < 2:
-                parts = message_text.split(" between ")
-            
-            if len(parts) >= 2:
-                options = [p.strip() for p in parts[1:] if p.strip()]
-            else:
-                options = ["option 1", "option 2"]
-        else:
-            # Use AI to extract options
-            prompt = f"""Extract decision options from: "{message_text}"
-            Return 2-4 options separated by |"""
-            
-            try:
-                options_text = generate_catchy_message("response", user_message=prompt)
-                if isinstance(options_text, list):
-                    options_text = " ".join(options_text)
-                options = [opt.strip() for opt in options_text.split("|") if opt.strip()]
-            except:
-                options = ["option 1", "option 2"]
-        
-        if len(options) < 2:
-            options = ["option 1", "option 2"]
-        
-        # Spin the wheel
-        chosen = random.choice(options)
-        return f"🎰 chaos wheel says: {chosen} (no backsies)"
-    
-    def start_anonymous_vote(self, chat_id: int, message_text: str) -> str:
-        """Start an anonymous vote"""
-        # Extract question
-        text_lower = message_text.lower()
-        question = message_text.replace("anonymous vote", "").replace("anon vote", "").strip()
-        
-        if not question or len(question) < 5:
-            question = "What should we do?"
-        
-        # Generate options
-        prompt = f"""Generate 2-4 voting options for: "{question}"
-        Format as: option1 | option2 | option3"""
-        
-        try:
-            options_text = generate_catchy_message("response", user_message=prompt)
-            if isinstance(options_text, list):
-                options_text = " ".join(options_text)
-            options = [opt.strip() for opt in options_text.split("|") if opt.strip()]
-        except:
-            options = ["option 1", "option 2"]
-        
-        # Store vote
-        vote_id = f"vote_{int(time.time())}"
-        self.anonymous_votes[chat_id] = {
-            "id": vote_id,
-            "question": question,
-            "options": options,
-            "votes": {},
-            "timestamp": time.time()
-        }
-        
-        # Format response
-        response = f"🗳️ Anonymous vote: {question}\n\n"
-        for i, opt in enumerate(options[:4], 1):
-            response += f"{i}. {opt}\n"
-        response += "\nreply with number to vote (anonymous)"
-        
-        return response
-    
-    def set_accountability_ping(self, chat_id: int, message_text: str) -> str:
-        """Set up accountability reminders"""
-        if chat_id not in self.accountability_tasks:
-            self.accountability_tasks[chat_id] = []
-        
-        # Extract task and frequency
-        text_lower = message_text.lower()
-        
-        # Simple extraction
-        task = message_text
-        frequency = "weekly"
-        
-        if "daily" in text_lower:
-            frequency = "daily"
-        elif "weekly" in text_lower:
-            frequency = "weekly"
-        elif "monday" in text_lower:
-            frequency = "monday"
-        
-        task_entry = {
-            "description": task,
-            "frequency": frequency,
-            "timestamp": time.time()
-        }
-        
-        self.accountability_tasks[chat_id].append(task_entry)
-        
-        return f"✅ accountability ping set: {task} ({frequency})"
     
     # =========================================================================
     # SOCIAL DYNAMICS
@@ -601,43 +695,6 @@ class GroupChatHandler:
     # CONTENT & ENTERTAINMENT
     # =========================================================================
     
-    def start_versus(self, chat_id: int, message_text: str) -> str:
-        """Start a versus debate bracket"""
-        # Extract topics
-        text_lower = message_text.lower()
-        text_clean = message_text.replace("versus", "").replace("vs", "").strip()
-        
-        if " vs " in text_clean:
-            topics = [t.strip() for t in text_clean.split(" vs ")]
-        else:
-            # Use AI to generate versus topics
-            prompt = f"""Generate a fun "versus" debate topic based on: "{text_clean}"
-            Format as: topic1 vs topic2"""
-            
-            try:
-                topics_text = generate_catchy_message("response", user_message=prompt)
-                if isinstance(topics_text, list):
-                    topics_text = " ".join(topics_text)
-                if " vs " in topics_text:
-                    topics = [t.strip() for t in topics_text.split(" vs ")]
-                else:
-                    topics = ["option 1", "option 2"]
-            except:
-                topics = ["option 1", "option 2"]
-        
-        if len(topics) < 2:
-            topics = ["option 1", "option 2"]
-        
-        # Store versus
-        self.active_versus[chat_id] = {
-            "topic1": topics[0],
-            "topic2": topics[1],
-            "votes": {"topic1": 0, "topic2": 0},
-            "timestamp": time.time()
-        }
-        
-        return f"⚔️ VERSUS: {topics[0]} vs {topics[1]}\n\nreact with 1 or 2 to vote"
-    
     def would_you_rather(self, chat_id: int) -> str:
         """Generate contextually relevant would you rather prompt"""
         messages = self.get_recent_messages(chat_id, limit=20)
@@ -665,20 +722,42 @@ class GroupChatHandler:
         
         context = " ".join([m['text'] for m in target_messages[-3:]])
         
-        prompt = f"""Generate a fun, consensual roast about: {target}
-        Keep it lighthearted and Gen Z style (1-2 sentences max). 
-        Context: {context[:200]}
+        # Check if user requested specific language
+        recent_msg = messages[-1]['text'] if messages else ""
+        language_request = ""
+        if "telugu" in recent_msg.lower() or "in telugu" in recent_msg.lower():
+            language_request = " Respond in Telugu (Telugu script)."
+        elif "hindi" in recent_msg.lower() or "in hindi" in recent_msg.lower():
+            language_request = " Respond in Hindi (Devanagari script)."
+        elif "spanish" in recent_msg.lower() or "in spanish" in recent_msg.lower():
+            language_request = " Respond in Spanish."
         
-        Be playful, not mean."""
+        prompt = f"""Generate a fun, playful roast about: {target}
+        
+        Requirements:
+        - Keep it lighthearted and Gen Z style (1-2 sentences max)
+        - Be playful and funny, NOT mean or hurtful
+        - Use Gen Z slang naturally (lowkey, fr, no cap, etc.)
+        - Make it specific and creative, not generic{language_request}
+        
+        Context from recent messages: {context[:200]}
+        
+        Example style: "bro {target} is giving main character energy but forgot to read the assignment 💀" or "{target} really said 'let me cook' and served us nothing fr"
+        
+        Generate a creative, specific roast that's funny but friendly."""
         
         try:
             roast_list = generate_catchy_message("response", user_message=prompt)
             if isinstance(roast_list, list):
-                return roast_list[0] if roast_list else f"roast about {target}"
-            return roast_list
+                roast_text = roast_list[0] if roast_list else ""
+                if not roast_text or len(roast_text) < 10:
+                    # Fallback if generation is too short
+                    roast_text = f"{target} really said 'let me cook' and served us nothing fr 💀"
+                return roast_text
+            return roast_list if roast_list else f"{target} really said 'let me cook' and served us nothing fr 💀"
         except Exception as e:
             logger.error(f"Error generating roast: {e}")
-            return f"roast about {target} (generation failed)"
+            return f"{target} really said 'let me cook' and served us nothing fr 💀"
     
     def hype_train(self, chat_id: int, target: str) -> str:
         """Start collaborative compliment train"""
@@ -793,36 +872,10 @@ class GroupChatHandler:
             logger.error(f"Error generating trivia: {e}")
             return "trivia question (generation failed)"
     
-    def create_prediction_market(self, chat_id: int, message_text: str) -> str:
-        """Create a prediction market on group decisions"""
-        # Extract prediction question
-        text_lower = message_text.lower()
-        question = message_text.replace("prediction", "").replace("bet on", "").strip()
-        
-        if not question or len(question) < 5:
-            question = "Will we actually do this?"
-        
-        market_id = f"market_{int(time.time())}"
-        self.prediction_markets[chat_id] = {
-            "id": market_id,
-            "question": question,
-            "yes_votes": 0,
-            "no_votes": 0,
-            "timestamp": time.time()
-        }
-        
-        return f"📊 Prediction Market: {question}\n\nreact 👍 for yes, 👎 for no"
-    
     # =========================================================================
     # ACCESSIBILITY & INCLUSIVITY
     # =========================================================================
     
-    def translate_message(self, chat_id: int, message_text: str) -> str:
-        """Translate message (placeholder - would need translation API)"""
-        # Extract target language
-        text_lower = message_text.lower()
-        target_lang = "spanish"  # Default
-        
         if "to spanish" in text_lower or "en español" in text_lower:
             target_lang = "spanish"
         elif "to french" in text_lower or "en français" in text_lower:
@@ -941,16 +994,28 @@ class GroupChatHandler:
     def _is_chat_dead(self, chat_id: int) -> bool:
         """Check if chat is dead (no activity recently)"""
         if chat_id not in self.recent_messages:
-            return True
+            return False  # Don't consider new chats as dead
         
         messages = list(self.recent_messages[chat_id])
         if not messages:
-            return True
+            return False  # Don't consider empty chats as dead
         
         now = time.time()
-        recent = [m for m in messages if now - m.get('timestamp', 0) < 3600]  # Last hour
+        # Get most recent message
+        most_recent = max([m.get('timestamp', 0) for m in messages])
+        time_since_last = now - most_recent
         
-        return len(recent) < 2
+        # Only consider chat dead if:
+        # 1. Last message was more than 1 hour ago (not right after someone texts)
+        # 2. Less than 3 messages in last 2 hours
+        if time_since_last < 3600:  # Less than 1 hour since last message
+            return False  # Chat is active, not dead
+        
+        # Check messages in last 2 hours
+        recent = [m for m in messages if now - m.get('timestamp', 0) < 7200]  # Last 2 hours
+        
+        # Chat is dead if less than 3 messages in last 2 hours AND last message was more than 1 hour ago
+        return len(recent) < 3
     
     def _needs_temperature_check(self, chat_id: int) -> bool:
         """Check if temperature check is needed"""

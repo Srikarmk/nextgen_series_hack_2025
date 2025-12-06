@@ -2,12 +2,10 @@
 Interest Tracking and Group Matching System
 Tracks user interests and creates groups when interests match
 """
-import logging
 import time
 from typing import Dict, List, Set, Optional, Tuple
 from collections import defaultdict
-
-logger = logging.getLogger(__name__)
+from app_logger import logger
 
 
 class InterestTracker:
@@ -54,7 +52,7 @@ class InterestTracker:
         normalized = [i.lower().strip() for i in interests if i.strip()]
         
         if not normalized:
-            logger.warning(f"⚠️  No valid interests to add for {phone_number}")
+            logger.warning(f"[WARN]  No valid interests to add for {phone_number}")
             return
         
         # Remove old interests from index
@@ -72,8 +70,8 @@ class InterestTracker:
         if chat_id:
             self.user_chat_ids[phone_number] = chat_id
         
-        logger.info(f"📝 Updated interests for {phone_number}: {normalized} (total: {len(self.user_interests[phone_number])} interests)")
-        logger.debug(f"📝 All users with interests: {list(self.user_interests.keys())}")
+        logger.info(f"[INTEREST] Updated interests for {phone_number}: {normalized} (total: {len(self.user_interests[phone_number])} interests)")
+        logger.debug(f"[INTEREST] All users with interests: {list(self.user_interests.keys())}")
     
     def get_user_interests(self, phone_number: str) -> Set[str]:
         """Get interests for a user"""
@@ -99,35 +97,35 @@ class InterestTracker:
         
         matches = []
         
-        logger.debug(f"🔍 Finding matches for {phone_number} with interests: {user_interests}")
-        logger.debug(f"🔍 Total users in tracker: {len(self.user_interests)}")
+        logger.debug(f"[MATCH] Finding matches for {phone_number} with interests: {user_interests}")
+        logger.debug(f"[MATCH] Total users in tracker: {len(self.user_interests)}")
         
         for other_phone, other_interests in self.user_interests.items():
             if other_phone == phone_number:
                 continue
             
-            logger.debug(f"🔍 Checking {other_phone} with interests: {other_interests}")
+            logger.debug(f"[MATCH] Checking {other_phone} with interests: {other_interests}")
             
             # Check cooldown (avoid spam)
             match_key = tuple(sorted([phone_number, other_phone]))
             if match_key in self.recent_matches:
                 time_diff = time.time() - self.recent_matches[match_key]
                 if time_diff < 300:  # 5 min cooldown
-                    logger.debug(f"⏭️  Skipping {other_phone} - cooldown active ({time_diff:.0f}s remaining)")
+                    logger.debug(f"[SKIP]  Skipping {other_phone} - cooldown active ({time_diff:.0f}s remaining)")
                     continue
             
             # Find shared interests
             shared = user_interests & other_interests
-            logger.debug(f"🔍 Shared interests with {other_phone}: {shared} (need {min_shared})")
+            logger.debug(f"[MATCH] Shared interests with {other_phone}: {shared} (need {min_shared})")
             
             if len(shared) >= min_shared:
                 matches.append((other_phone, list(shared)))
-                logger.info(f"✅ Found match: {phone_number} <-> {other_phone} (shared: {shared})")
+                logger.info(f"[OK] Found match: {phone_number} <-> {other_phone} (shared: {shared})")
         
         # Sort by number of shared interests (descending)
         matches.sort(key=lambda x: len(x[1]), reverse=True)
         
-        logger.info(f"🎯 Found {len(matches)} match(es) for {phone_number}")
+        logger.info(f"[MATCH] Found {len(matches)} match(es) for {phone_number}")
         return matches
     
     def find_group_candidates(self, phone_number: str) -> Optional[Tuple[List[str], List[str]]]:
@@ -201,7 +199,7 @@ class InterestTracker:
                 match_key = tuple(sorted([phone1, phone2]))
                 self.recent_matches[match_key] = time.time()
         
-        logger.info(f"✅ Created group '{display_name}' ({group_id}) with {len(members)} members: {shared_interests}")
+        logger.info(f"[OK] Created group '{display_name}' ({group_id}) with {len(members)} members: {shared_interests}")
         
         return group_id
     
@@ -215,7 +213,7 @@ class InterestTracker:
             "{} Squad 🔥",
             "{} Crew ✨",
             "{} Gang 💪",
-            "{} Buddies 🎯",
+            "{} Buddies [MATCH]",
             "The {} People 🙌"
         ]
         
@@ -291,7 +289,7 @@ class InterestTracker:
         # Update group in tracker
         self.groups[group_id] = (name, members, interests, chat_id)
         
-        logger.info(f"✅ Added {phone_number} to group {group_id}")
+        logger.info(f"[OK] Added {phone_number} to group {group_id}")
         return True
     
     def get_group_chat_id(self, group_id: str) -> Optional[int]:

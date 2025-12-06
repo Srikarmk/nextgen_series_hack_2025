@@ -1,12 +1,10 @@
 """
 Series API Client - All API functions from the spec
 """
-import logging
 import requests
 from typing import Optional, Dict, Any, List
+from app_logger import logger
 from config import SERIES_API_KEY, SERIES_BASE_URL
-
-logger = logging.getLogger(__name__)
 
 
 class SeriesAPIClient:
@@ -153,20 +151,20 @@ class SeriesAPIClient:
         """Get a specific message"""
         url = f"{self.base_url}/api/chats/{chat_id}/chat_messages/{message_id}"
         try:
-            logger.debug(f"🔍 GET {url}")
+            logger.debug(f"[GET] GET {url}")
             response = requests.get(url, headers=self.headers, timeout=10)
             response.raise_for_status()
             result = response.json()
-            logger.debug(f"✅ Got message {message_id}: {result}")
+            logger.debug(f"[OK] Got message {message_id}: {result}")
             return result
         except requests.exceptions.HTTPError as e:
             if e.response is not None:
-                logger.error(f"❌ Error getting message: {e.response.status_code} - {e.response.text}")
+                logger.error(f"[ERROR] Error getting message: {e.response.status_code} - {e.response.text}")
             else:
-                logger.error(f"❌ Error getting message: {e}")
+                logger.error(f"[ERROR] Error getting message: {e}")
             return None
         except Exception as e:
-            logger.error(f"❌ Error getting message: {e}", exc_info=True)
+            logger.error(f"[ERROR] Error getting message: {e}", exc_info=True)
             return None
     
     def list_messages(self, chat_id: int) -> Optional[Dict[str, Any]]:

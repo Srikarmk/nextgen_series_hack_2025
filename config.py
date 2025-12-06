@@ -2,8 +2,8 @@
 Configuration with environment variables
 """
 import os
-import logging
 from dotenv import load_dotenv
+from app_logger import logger
 
 # Load environment variables from .env file
 load_dotenv()
@@ -51,5 +51,4 @@ if missing_vars:
 
 # RECIPIENT_NUMBER is optional - bot will respond to anyone who texts first
 if not RECIPIENT_NUMBER:
-    logger = logging.getLogger(__name__)
     logger.info("RECIPIENT_NUMBER not set - bot will respond to anyone who texts first")

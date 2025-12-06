@@ -1,0 +1,568 @@
+{
+  "version": "2.0",
+  "description": "Unified Tools Configuration - Separate 1-on-1 and Group Chat Tools",
+  "chat_types": {
+    "one_on_one": "Tools available in 1-on-1 chats",
+    "group": "Tools available in group chats"
+  },
+  "one_on_one_tools": [
+    {
+      "id": "gen_z_response",
+      "name": "Gen Z Response",
+      "description": "Generates casual, Gen Z/Gen Alpha style responses. Always responds to every message in 1-on-1 chats. Uses 2-4 messages like real texts. Responds naturally to any user message with authentic Gen Z slang, abbreviations, and energy. This is the default response tool for all 1-on-1 messages.",
+      "category": "conversation",
+      "triggers": [],
+      "method": "generate_catchy_message",
+      "auto_trigger": true,
+      "condition": "always",
+      "example_usage": "User sends any message → Bot responds with Gen Z style (2-4 messages)",
+      "when_to_use": "Use this for every 1-on-1 message. This is the default conversation tool.",
+      "parameters": {
+        "prompt_type": "response",
+        "user_message": "required",
+        "conversation_history": "optional",
+        "known_interests": "optional",
+        "returns": "list of message strings"
+      }
+    },
+    {
+      "id": "extract_interests",
+      "name": "Extract Interests",
+      "description": "Automatically extracts user interests from messages using AI. Tracks interests over time for personalization and group matching. Detects when users mention things they like, love, enjoy, or are passionate about. Extracts hobbies, preferences, favorite things, and activities. Stores interests for future reference and group matching.",
+      "category": "personalization",
+      "triggers": [],
+      "method": "extract_interests",
+      "auto_trigger": true,
+      "condition": "always",
+      "example_usage": "User says 'I love pizza' → Bot extracts 'pizza' as interest",
+      "when_to_use": "Always runs automatically on every message to track user interests.",
+      "parameters": {
+        "message": "required",
+        "returns": "list of interest strings"
+      }
+    },
+    {
+      "id": "music_recommendation",
+      "name": "Music Recommendation",
+      "description": "Automatically shares Taylor Swift song links when user shows interest in music. Always shows music link (100% probability) when music interest detected. Detects music-related keywords like 'music', 'song', 'taylor swift', 'spotify', 'apple music', 'listening', 'playlist', 'album', 'artist', 'band'. Sends 4 messages: excitement message, question about vibes, 'listening to this rn', and the song link.",
+      "category": "entertainment",
+      "triggers": [],
+      "method": "add_music_link_if_applicable",
+      "auto_trigger": true,
+      "condition": "user_likes_music",
+      "example_usage": "User likes music → Bot sends 4 messages with song recommendation",
+      "when_to_use": "Automatically triggers when user has music interest or mentions music-related keywords.",
+      "parameters": {
+        "messages": "required",
+        "known_interests": "required",
+        "user_message": "optional",
+        "returns": "list of messages with music link added"
+      }
+    },
+    {
+      "id": "voice_transcription",
+      "name": "Voice Transcription",
+      "description": "Transcribes voice messages using Whisper AI. Processes transcribed text as regular messages. Handles audio attachments in various formats (m4a, mp3, wav, etc.). Converts speech to text and then processes the text as a normal message. Essential for accessibility and processing voice input.",
+      "category": "accessibility",
+      "triggers": [],
+      "method": "process_voice_message",
+      "auto_trigger": true,
+      "condition": "is_voice_message",
+      "example_usage": "User sends voice message → Bot transcribes and processes",
+      "when_to_use": "Automatically triggers when message contains audio/voice attachments.",
+      "parameters": {
+        "attachments": "required",
+        "returns": "string - transcribed text"
+      }
+    },
+    {
+      "id": "auto_reaction",
+      "name": "Auto Reaction",
+      "description": "Automatically adds reactions to messages based on content. Detects positive words, questions, etc. Analyzes message sentiment and adds appropriate reactions: love (❤️) for positive/affectionate messages, laugh (😂) for funny messages, question (❓) for questions, emphasize (❗) for important statements, like (👍) for general positive messages. Helps make conversations more engaging and expressive.",
+      "category": "engagement",
+      "triggers": [],
+      "method": "determine_reaction",
+      "auto_trigger": true,
+      "condition": "always",
+      "example_usage": "Message with 'love' → Bot adds ❤️ reaction",
+      "when_to_use": "Always runs automatically on every message to determine appropriate reactions.",
+      "parameters": {
+        "message_text": "required",
+        "returns": "string - reaction type (love, like, laugh, question, emphasize) or None"
+      }
+    },
+    {
+      "id": "group_matching",
+      "name": "Group Matching",
+      "description": "Automatically creates groups or adds users to existing groups when interests match. Connects users with similar interests. When a user mentions interests, searches for other users with matching interests. If match found, either adds user to existing group or creates new group with matching users. Generates fun group names based on shared interests. Helps users find their tribe and connect with like-minded people.",
+      "category": "social",
+      "triggers": [],
+      "method": "find_and_create_groups",
+      "auto_trigger": true,
+      "condition": "has_interests",
+      "example_usage": "User has 'pizza' interest → Bot finds/create group with other pizza lovers",
+      "when_to_use": "Automatically triggers when user has interests and matches are found.",
+      "parameters": {
+        "phone_number": "required",
+        "interests": "required",
+        "chat_id": "optional",
+        "returns": "group_id if group created/joined"
+      }
+    },
+    {
+      "id": "conversation_history",
+      "name": "Conversation History",
+      "description": "Maintains conversation context across messages. Stores up to 1000 tokens of history for context-aware responses. Keeps track of previous messages in the conversation to provide context for generating relevant responses. Essential for maintaining natural conversation flow and remembering what was discussed earlier.",
+      "category": "memory",
+      "triggers": [],
+      "method": "get_recent_history",
+      "auto_trigger": true,
+      "condition": "always",
+      "example_usage": "Every message → Bot stores and retrieves conversation history",
+      "when_to_use": "Always runs automatically to maintain conversation context.",
+      "parameters": {
+        "chat_id": "required",
+        "max_tokens": "optional - default 1000",
+        "returns": "list of conversation messages"
+      }
+    }
+  ],
+  "group_tools": [
+    {
+      "id": "vibe_check",
+      "name": "Vibe Check",
+      "description": "Analyzes the group chat's current energy and mood based on recent message patterns. Detects high energy, chaos, positivity, negativity, or if the chat is dead. Examines message frequency, sentiment, and patterns to determine the overall vibe. Returns Gen Z style descriptions like 'vibes are immaculate rn ✨' or 'chat is dead rn 💀'. Use when users ask about the group's energy, mood, or atmosphere. Also triggered automatically when chat is quiet.",
+      "category": "vibe_mood",
+      "triggers": ["vibe check", "what's the vibe", "how's the vibe"],
+      "method": "check_vibe",
+      "example_usage": "User says: 'vibe check' → Bot responds with energy level like 'vibes are immaculate rn ✨' or 'chat is dead rn 💀'",
+      "when_to_use": "Use when user asks about group energy, mood, atmosphere, or how the chat is feeling. Also auto-triggers when chat is dead.",
+      "user_intent_patterns": ["check vibe", "what's the vibe", "how's the vibe", "vibe check", "how's everyone feeling", "what's the energy", "chat dead", "chat quiet"],
+      "parameters": {
+        "chat_id": "required",
+        "returns": "string - vibe description"
+      }
+    },
+    {
+      "id": "aura_reading",
+      "name": "Aura Reading",
+      "description": "Uses AI to generate a creative, Gen Z-style aura reading of the group chat based on recent conversations. Gives a mystical/spiritual vibe reading of the chat's energy. Analyzes recent messages and creates a fun, creative description of the group's 'aura' - like 'chaotic neutral with hints of existential dread' or 'golden hour energy with main character vibes'. More creative and mystical than vibe_check. Use when users want a fun, creative reading of the chat's energy.",
+      "category": "vibe_mood",
+      "triggers": ["aura", "what's the aura", "read the aura"],
+      "method": "read_aura",
+      "example_usage": "User says: 'what's the aura' → Bot responds with AI-generated aura like 'aura: chaotic neutral with hints of existential dread'",
+      "when_to_use": "Use when user asks about the chat's 'aura' or wants a mystical/creative reading of the group energy. Different from vibe_check - this is more creative and fun.",
+      "user_intent_patterns": ["what's the aura", "read the aura", "aura", "what's our aura", "tell me the aura"],
+      "parameters": {
+        "chat_id": "required",
+        "returns": "string - aura reading"
+      }
+    },
+    {
+      "id": "get_lore",
+      "name": "Get Lore",
+      "description": "Retrieves stored 'lore' (memories/history) about a specific topic or general group chat history. Lore is automatically created from important conversations and can be queried later. The group chat has a memory system that stores important information, inside jokes, decisions, and history. Users can ask about specific topics or get general lore. If no lore exists for a topic, returns 'no lore yet'. Use when users ask about past conversations, history, or want to know what the group has discussed about something.",
+      "category": "memory_lore",
+      "triggers": ["what's the lore", "what the lore", "what is the lore", "tell me the lore", "lore on", "the lore"],
+      "method": "get_lore",
+      "extract_topic": true,
+      "example_usage": "User says: 'what's the lore on pizza' → Bot responds with stored lore about pizza discussions in the group",
+      "when_to_use": "Use when user asks about lore, history, past conversations, or wants to know what the group knows about a specific topic. Extract the topic from the message (e.g., 'lore on pizza' → topic is 'pizza').",
+      "user_intent_patterns": ["what's the lore", "what the lore", "what is the lore", "tell me the lore", "lore on", "the lore", "what do we know about", "remember when"],
+      "parameters": {
+        "chat_id": "required",
+        "topic": "optional - extracted from message",
+        "returns": "string - lore entry or 'no lore yet'"
+      }
+    },
+    {
+      "id": "generate_catchup",
+      "name": "Generate Catchup",
+      "description": "Creates a personalized summary for a user who has been away from the chat. Analyzes messages since they were last active and generates a catch-up summary. Perfect for users returning after being away. Summarizes important events, conversations, decisions, and highlights they missed. Use when users ask to be caught up, want to know what they missed, or ask for a summary of recent activity.",
+      "category": "memory_lore",
+      "triggers": ["previously on", "catch me up", "what did i miss"],
+      "method": "generate_catchup",
+      "example_usage": "User says: 'catch me up' → Bot responds with summary of what happened while they were gone",
+      "when_to_use": "Use when user asks to be caught up, wants to know what they missed, or asks for a summary of recent messages.",
+      "user_intent_patterns": ["catch me up", "what did i miss", "previously on", "summarize", "what happened", "fill me in", "bring me up to speed"],
+      "parameters": {
+        "chat_id": "required",
+        "from_phone": "required - user requesting catchup",
+        "returns": "string - catchup summary"
+      }
+    },
+    {
+      "id": "pin_core_memory",
+      "name": "Pin Core Memory",
+      "description": "Saves the current conversation or a specific moment as a 'core memory' - an important, pinned memory that the group can reference later. Like bookmarking important moments. Core memories are special, important moments that the group wants to remember forever. They can be voted on by the group and saved permanently. Use when users want to save an important moment, decision, or conversation.",
+      "category": "memory_lore",
+      "triggers": ["core memory", "pin this"],
+      "method": "pin_core_memory",
+      "example_usage": "User says: 'pin this' → Bot saves current conversation as a core memory",
+      "when_to_use": "Use when user wants to save/pin an important moment, decision, or conversation as a core memory.",
+      "user_intent_patterns": ["core memory", "pin this", "save this", "remember this", "bookmark this"],
+      "parameters": {
+        "chat_id": "required",
+        "message_text": "required - context to pin",
+        "returns": "string - confirmation message"
+      }
+    },
+    {
+      "id": "would_you_rather",
+      "name": "Would You Rather",
+      "description": "Generates a random 'Would You Rather' question for the group to discuss and vote on. Creates fun, engaging conversations and debates. The bot generates a creative, contextually relevant 'Would You Rather' question based on recent chat context. Great for sparking discussions, debates, and getting to know each other. Use when users want a fun question, debate starter, or 'would you rather' game.",
+      "category": "entertainment",
+      "triggers": ["would you rather", "wyr"],
+      "method": "would_you_rather",
+      "example_usage": "User says: 'would you rather' → Bot generates random WYR question",
+      "when_to_use": "Use when user asks for a 'would you rather' question, wants a debate starter, or asks for 'wyr'.",
+      "user_intent_patterns": ["would you rather", "wyr", "would you rather question", "debate starter", "fun question"],
+      "parameters": {
+        "chat_id": "required",
+        "returns": "string - would you rather question"
+      }
+    },
+    {
+      "id": "roast",
+      "name": "Roast",
+      "description": "Generates playful, Gen Z-style roasts of a target person. Lighthearted teasing that's fun but not mean. Perfect for friendly banter in the group. The bot creates creative, specific roasts based on recent context about the target. Roasts are playful, funny, and use Gen Z slang. Can respond in different languages if requested (e.g., 'roast in telugu'). Use when users want to roast someone, tease a friend, or have playful banter. Extract the target person's name from the message.",
+      "category": "entertainment",
+      "triggers": ["roast "],
+      "method": "roast",
+      "example_usage": "User says: 'roast john' → Bot generates playful roast of john",
+      "when_to_use": "Use when user wants to roast someone, tease a friend, or have playful banter. Extract the target person's name from the message (e.g., 'roast john' → target is 'john'). Can include language requests like 'roast in telugu'.",
+      "user_intent_patterns": ["roast", "roast [name]", "tease", "make fun of", "roast in [language]"],
+      "parameters": {
+        "chat_id": "required",
+        "target": "required - extracted from message (person to roast)",
+        "from_phone": "required - person requesting roast",
+        "returns": "string - playful roast message"
+      }
+    },
+    {
+      "id": "hype_train",
+      "name": "Hype Train",
+      "description": "Generates hype messages to celebrate or hype up a group member. Creates positive energy and celebrates achievements or just hypes someone up for fun. The bot creates enthusiastic, Gen Z-style hype messages celebrating the target person. Great for celebrating achievements, birthdays, milestones, or just hyping someone up. Use when users want to celebrate someone, hype them up, or show support. Extract the target person's name from the message.",
+      "category": "entertainment",
+      "triggers": ["hype ", "hype up"],
+      "method": "hype_train",
+      "example_usage": "User says: 'hype up sarah' → Bot generates hype messages celebrating sarah",
+      "when_to_use": "Use when user wants to hype someone up, celebrate them, or show support. Extract the target person's name from the message (e.g., 'hype up sarah' → target is 'sarah').",
+      "user_intent_patterns": ["hype", "hype up", "hype [name]", "celebrate", "cheer for", "support"],
+      "parameters": {
+        "chat_id": "required",
+        "target": "required - extracted from message (person to hype)",
+        "returns": "string - hype message"
+      }
+    },
+    {
+      "id": "story_mode",
+      "name": "Story Mode",
+      "description": "Starts collaborative storytelling mode where the group collectively creates a story. Each message contributes to the ongoing narrative. Bot continues the story based on group input. Once started, the group takes turns adding to the story, and the bot continues the narrative naturally. Great for creative collaboration and fun group activities. Use when users want to start a collaborative story or creative writing activity.",
+      "category": "entertainment",
+      "triggers": ["story mode", "start story"],
+      "method": "start_story_mode",
+      "example_usage": "User says: 'story mode' → Bot starts collaborative story, group adds to it",
+      "when_to_use": "Use when user wants to start collaborative storytelling, creative writing, or story mode.",
+      "user_intent_patterns": ["story mode", "start story", "collaborative story", "let's write a story", "story time"],
+      "parameters": {
+        "chat_id": "required",
+        "returns": "string - story start message"
+      }
+    },
+    {
+      "id": "show_achievements",
+      "name": "Show Achievements",
+      "description": "Displays all achievements unlocked by the group. Tracks milestones, streaks, and special accomplishments. Gamifies the group chat experience. Shows all achievements the group has earned, like 'First 100 messages', 'Week streak', 'Lore master', etc. Use when users want to see their achievements, milestones, or group accomplishments.",
+      "category": "gamification",
+      "triggers": ["achievements", "show achievements"],
+      "method": "show_achievements",
+      "example_usage": "User says: 'show achievements' → Bot lists all group achievements",
+      "when_to_use": "Use when user wants to see achievements, milestones, or group accomplishments.",
+      "user_intent_patterns": ["achievements", "show achievements", "our achievements", "what achievements", "milestones"],
+      "parameters": {
+        "chat_id": "required",
+        "returns": "string - list of achievements"
+      }
+    },
+    {
+      "id": "group_trivia",
+      "name": "Group Trivia",
+      "description": "Starts a trivia game for the group. Asks questions that the group can answer together. Makes the chat more interactive and fun. The bot generates trivia questions relevant to the group's interests and recent conversations. Great for group bonding and fun competition. Use when users want to play trivia, answer questions together, or have a quiz game.",
+      "category": "gamification",
+      "triggers": ["trivia", "group trivia"],
+      "method": "group_trivia",
+      "example_usage": "User says: 'trivia' → Bot asks trivia question for group to answer",
+      "when_to_use": "Use when user wants to play trivia, have a quiz, or answer questions together.",
+      "user_intent_patterns": ["trivia", "group trivia", "quiz", "trivia game", "ask us a question"],
+      "parameters": {
+        "chat_id": "required",
+        "returns": "string - trivia question"
+      }
+    },
+    {
+      "id": "auto_vibe_check",
+      "name": "Auto Vibe Check",
+      "description": "Automatically checks the vibe when the chat has been quiet/dead for a while. Passive feature that activates when chat activity is low. Helps revive dead chats. Monitors message frequency and automatically checks the vibe if the chat has been inactive. Returns vibe description and suggests activities to revive the chat. Use automatically when chat is dead (no hardcoded triggers needed).",
+      "category": "auto_features",
+      "triggers": [],
+      "method": "check_vibe",
+      "auto_trigger": true,
+      "condition": "is_chat_dead",
+      "example_usage": "Chat is quiet → Bot automatically checks vibe and suggests activities",
+      "when_to_use": "Automatically triggers when chat has been inactive/quiet for a while.",
+      "parameters": {
+        "chat_id": "required",
+        "returns": "string - vibe check result if chat is dead"
+      }
+    },
+    {
+      "id": "ghost_detection",
+      "name": "Ghost Detection",
+      "description": "Automatically detects inactive members who haven't been active in the chat recently. Mentions them to bring them back into the conversation. Helps keep everyone engaged. Tracks when each member was last active and identifies members who haven't been active for several days. Mentions them to check in and bring them back. Use automatically to keep everyone engaged (no hardcoded triggers needed).",
+      "category": "auto_features",
+      "triggers": [],
+      "method": "check_ghosts",
+      "auto_trigger": true,
+      "condition": "always",
+      "example_usage": "User inactive for days → Bot mentions them to check in",
+      "when_to_use": "Automatically triggers to detect and mention inactive members.",
+      "parameters": {
+        "chat_id": "required",
+        "returns": "string - ghost detection message if inactive users found"
+      }
+    },
+    {
+      "id": "temperature_check",
+      "name": "Temperature Check",
+      "description": "Automatically detects tension or issues in the group chat. Monitors message sentiment and suggests resolution if things are getting heated. Helps maintain positive group dynamics. Analyzes message sentiment and detects when conversations are getting tense, negative, or heated. Suggests taking a break or resolving conflicts. Use automatically when tension is detected (no hardcoded triggers needed).",
+      "category": "auto_features",
+      "triggers": [],
+      "method": "temperature_check",
+      "auto_trigger": true,
+      "condition": "needs_temperature_check",
+      "example_usage": "Tension detected → Bot suggests taking a break or resolving conflict",
+      "when_to_use": "Automatically triggers when tension or negative sentiment is detected in messages.",
+      "parameters": {
+        "chat_id": "required",
+        "returns": "string - temperature check result if tension detected"
+      }
+    },
+    {
+      "id": "auto_hype",
+      "name": "Auto Hype",
+      "description": "Automatically generates hype when celebrations are detected (birthdays, achievements, milestones). Celebrates group members without them having to ask. Makes the chat more positive. Detects celebration keywords like 'got', 'won', 'passed', 'got accepted', 'got the job', 'promoted', 'achieved', 'finished', 'completed', 'yay', 'celebrate'. Automatically generates hype messages to celebrate. Use automatically when celebrations are detected (no hardcoded triggers needed).",
+      "category": "auto_features",
+      "triggers": [],
+      "method": "generate_hype",
+      "auto_trigger": true,
+      "condition": "has_celebration",
+      "example_usage": "Birthday mentioned → Bot automatically generates celebration hype",
+      "when_to_use": "Automatically triggers when celebration keywords or achievements are detected in messages.",
+      "parameters": {
+        "chat_id": "required",
+        "celebration": "required - celebration data from queue",
+        "returns": "string - hype message"
+      }
+    },
+    {
+      "id": "story_continuation",
+      "name": "Story Continuation",
+      "description": "Automatically continues collaborative stories when story mode is active. Takes group input and continues the narrative. Keeps the story flowing naturally. When story mode is active, each user message contributes to the story, and the bot continues the narrative based on the group's input. Use automatically when story mode is active and users add to the story (no hardcoded triggers needed).",
+      "category": "auto_features",
+      "triggers": [],
+      "method": "continue_story",
+      "auto_trigger": true,
+      "condition": "story_mode_active",
+      "example_usage": "Story mode active + user adds to story → Bot continues the narrative",
+      "when_to_use": "Automatically triggers when story mode is active and users contribute to the story.",
+      "parameters": {
+        "chat_id": "required",
+        "message_text": "required - user's story contribution",
+        "from_phone": "required - user adding to story",
+        "returns": "string - story continuation if story mode is active"
+      }
+    },
+    {
+      "id": "suggest_tone_indicator",
+      "name": "Suggest Tone Indicator",
+      "description": "Automatically suggests tone indicators (/s for sarcasm, /j for joking) for ambiguous messages. Helps prevent misunderstandings in text communication. Passive feature that runs on every message. Analyzes message tone and suggests adding tone indicators like /s (sarcasm), /j (joking), /srs (serious) if the message could be misinterpreted. Use automatically on every message to prevent misunderstandings (no hardcoded triggers needed).",
+      "category": "auto_features",
+      "triggers": [],
+      "method": "suggest_tone_indicator",
+      "auto_trigger": true,
+      "condition": "always",
+      "example_usage": "Ambiguous message → Bot suggests adding /s or /j if needed",
+      "when_to_use": "Automatically triggers on every message to analyze tone and suggest indicators if needed.",
+      "parameters": {
+        "message_text": "required - message to analyze",
+        "returns": "string - tone suggestion if message is ambiguous"
+      }
+    },
+    {
+      "id": "generate_voice_tldr",
+      "name": "Generate Voice TLDR",
+      "description": "Automatically generates a TLDR (Too Long; Didn't Read) summary for long voice messages. Helps users quickly understand long voice messages without listening to the whole thing. When a voice message is transcribed and is longer than 100 characters, automatically generates a concise summary. Use automatically for long voice messages (no hardcoded triggers needed).",
+      "category": "auto_features",
+      "triggers": [],
+      "method": "generate_voice_tldr",
+      "auto_trigger": true,
+      "condition": "is_long_voice_message",
+      "example_usage": "Long voice message (>100 chars) → Bot generates TLDR summary",
+      "when_to_use": "Automatically triggers when a transcribed voice message is longer than 100 characters.",
+      "parameters": {
+        "chat_id": "required",
+        "transcribed_text": "required - transcribed voice message text",
+        "returns": "string - TLDR summary"
+      }
+    }
+  ],
+  "api_features": {
+    "message_operations": [
+      {
+        "id": "edit_message",
+        "name": "Edit Message",
+        "description": "Edit a message within 15 minutes of creation. Useful for fixing typos or updating information.",
+        "endpoint": "POST /api/chats/{chat_id}/chat_messages/{message_id}/edit",
+        "available_in": ["one_on_one", "group"],
+        "method": "edit_message"
+      },
+      {
+        "id": "delete_message",
+        "name": "Delete Message",
+        "description": "Delete a message. Can be used to remove incorrect or unwanted messages.",
+        "endpoint": "DELETE /api/chats/{chat_id}/chat_messages/{message_id}",
+        "available_in": ["one_on_one", "group"],
+        "method": "delete_message"
+      },
+      {
+        "id": "get_message",
+        "name": "Get Message",
+        "description": "Retrieve a specific message by ID. Useful for getting full message details including attachments.",
+        "endpoint": "GET /api/chats/{chat_id}/chat_messages/{message_id}",
+        "available_in": ["one_on_one", "group"],
+        "method": "get_message"
+      },
+      {
+        "id": "list_messages",
+        "name": "List Messages",
+        "description": "Get all messages for a chat. Useful for retrieving conversation history.",
+        "endpoint": "GET /api/chats/{chat_id}/chat_messages",
+        "available_in": ["one_on_one", "group"],
+        "method": "list_messages"
+      }
+    ],
+    "reaction_operations": [
+      {
+        "id": "add_reaction",
+        "name": "Add Reaction",
+        "description": "Add a reaction to a message. Types: love, like, dislike, laugh, emphasize, question.",
+        "endpoint": "POST /api/chat_messages/{id}/reactions",
+        "available_in": ["one_on_one", "group"],
+        "method": "add_reaction"
+      },
+      {
+        "id": "remove_reaction",
+        "name": "Remove Reaction",
+        "description": "Remove a reaction from a message.",
+        "endpoint": "POST /api/chat_messages/{id}/reactions",
+        "available_in": ["one_on_one", "group"],
+        "method": "remove_reaction"
+      },
+      {
+        "id": "get_reaction",
+        "name": "Get Reaction",
+        "description": "Get details of a specific reaction.",
+        "endpoint": "GET /api/chat_message_reactions/{id}",
+        "available_in": ["one_on_one", "group"],
+        "method": "get_reaction"
+      }
+    ],
+    "chat_operations": [
+      {
+        "id": "mark_as_read",
+        "name": "Mark Chat as Read",
+        "description": "Marks all messages in a chat as read. Automatically called when processing messages.",
+        "endpoint": "PUT /api/chats/{id}/mark_as_read",
+        "available_in": ["one_on_one", "group"],
+        "method": "mark_chat_as_read"
+      },
+      {
+        "id": "start_typing",
+        "name": "Start Typing Indicator",
+        "description": "Shows typing indicator to users. Automatically called before sending messages.",
+        "endpoint": "POST /api/chats/{id}/start_typing",
+        "available_in": ["one_on_one", "group"],
+        "method": "start_typing"
+      },
+      {
+        "id": "stop_typing",
+        "name": "Stop Typing Indicator",
+        "description": "Stops typing indicator. Automatically called after sending messages.",
+        "endpoint": "DELETE /api/chats/{id}/stop_typing",
+        "available_in": ["one_on_one", "group"],
+        "method": "stop_typing"
+      },
+      {
+        "id": "get_chat",
+        "name": "Get Chat",
+        "description": "Retrieve chat details including participants and metadata.",
+        "endpoint": "GET /api/chats/{id}",
+        "available_in": ["one_on_one", "group"],
+        "method": "get_chat"
+      },
+      {
+        "id": "list_chats",
+        "name": "List Chats",
+        "description": "List all chats with optional filtering by phone number and pagination.",
+        "endpoint": "GET /api/chats",
+        "available_in": ["system"],
+        "method": "list_chats"
+      },
+      {
+        "id": "create_chat",
+        "name": "Create Chat",
+        "description": "Create a new chat (1-on-1 or group) and send initial message.",
+        "endpoint": "POST /api/chats",
+        "available_in": ["system"],
+        "method": "create_chat"
+      }
+    ],
+    "attachment_support": {
+      "description": "All message sending endpoints support attachments with base64-encoded data",
+      "supported_formats": ["images", "audio", "video", "documents", "pdfs"],
+      "fields": {
+        "filename": "required",
+        "mime_type": "required",
+        "data_base64": "required - base64 encoded file data (no data URI prefix)"
+      }
+    }
+  },
+  "categories": {
+    "conversation": "Core conversation features for 1-on-1 chats",
+    "personalization": "Features that personalize the experience based on user interests",
+    "entertainment": "Fun activities and games",
+    "information": "Features that provide information or answer questions",
+    "accessibility": "Features that make the chat more accessible",
+    "engagement": "Features that increase user engagement",
+    "social": "Features that connect users with others",
+    "memory": "Features that remember and use conversation history",
+    "vibe_mood": "Tools for checking and understanding group energy and mood",
+    "memory_lore": "Tools for remembering and retrieving group history and important moments",
+    "decision_coordination": "Tools for making decisions and coordinating group activities",
+    "gamification": "Tools that add game-like elements to the chat",
+    "auto_features": "Passive features that activate automatically based on conditions"
+  },
+  "usage_notes": {
+    "one_on_one_tools": "1-on-1 tools are always active and run automatically. They don't require explicit triggers.",
+    "group_tools": "Group tools require explicit triggers (user commands) or auto-trigger conditions.",
+    "trigger_matching": "Triggers are matched using LLM-based intent understanding, not simple text matching. The LLM understands user intent and selects the appropriate tool.",
+    "auto_triggers": "Auto-triggered tools run automatically based on conditions, not user commands. They check conditions on every message.",
+    "extract_topic": "Tools with extract_topic=true will try to extract a topic from the message after removing the trigger phrase.",
+    "extract_from_context": "Tools with extract_from_context=true will extract information from recent messages, not just the current message.",
+    "method_calling": "Each tool's 'method' field corresponds to a method name in the appropriate handler class. The method is called dynamically.",
+    "parameters": "Required parameters are passed based on the tool's needs. chat_id is always required for group tools. Other parameters are extracted from message_text, from_phone, or other context.",
+    "api_features": "API features are available in both 1-on-1 and group chats. They provide low-level operations like editing, deleting, and managing messages.",
+    "llm_selection": "All user-triggered group tools use LLM-based selection. The LLM understands user intent and selects the appropriate tool, even if the exact trigger phrase isn't used. This makes tool selection more flexible and intelligent."
+  }
+}

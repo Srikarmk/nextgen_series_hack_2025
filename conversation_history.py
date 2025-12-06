@@ -2,13 +2,11 @@
 Conversation History Tracker
 Stores and manages conversation history for each chat (up to ~1000 tokens)
 """
-import logging
 import time
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from collections import deque
-
-logger = logging.getLogger(__name__)
+from app_logger import logger
 
 
 @dataclass
@@ -57,7 +55,7 @@ class ConversationHistory:
         )
         
         self.histories[chat_id].append(message)
-        logger.debug(f"💬 Added {role} message to chat {chat_id} history")
+        logger.debug(f"[CHAT] Added {role} message to chat {chat_id} history")
     
     def get_recent_history(self, chat_id: int, max_tokens: Optional[int] = None) -> List[dict]:
         """
@@ -88,14 +86,14 @@ class ConversationHistory:
             result.insert(0, message.to_dict())
             total_tokens += msg_tokens
         
-        logger.debug(f"📚 Retrieved {len(result)} messages ({total_tokens} tokens) from chat {chat_id} history")
+        logger.debug(f"[HISTORY] Retrieved {len(result)} messages ({total_tokens} tokens) from chat {chat_id} history")
         return result
     
     def clear_history(self, chat_id: int):
         """Clear conversation history for a chat"""
         if chat_id in self.histories:
             del self.histories[chat_id]
-            logger.info(f"🗑️  Cleared history for chat {chat_id}")
+            logger.info(f"[CLEAR]  Cleared history for chat {chat_id}")
     
     def get_history_length(self, chat_id: int) -> int:
         """Get number of messages in history"""
