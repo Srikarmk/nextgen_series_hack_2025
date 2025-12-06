@@ -1,6 +1,6 @@
 """
 Message Processing Logic
-Handles message processing, reactions, and interactions
+Handles message processing and interactions
 """
 import time
 import base64
@@ -13,7 +13,6 @@ from interest_tracker import interest_tracker
 from conversation_history import conversation_history
 from group_chat_handler import group_chat_handler
 from one_on_one_handler import OneOnOneHandler
-from reaction_utils import determine_reaction
 from config import SENDER_NUMBER
 
 # Initialize 1-on-1 handler
@@ -43,7 +42,7 @@ def process_message(event: Dict[str, Any], message_count: int) -> bool:
         from_phone = data.get('from_phone', '')
         chat_id = data.get('chat_id', '')
         message_text = data.get('text', '')
-        message_id = data.get('id')  # Message ID for reactions
+        message_id = data.get('id')
         attachments = data.get('attachments', [])
 
         logger.info(f"Message #{message_count} details - From: {from_phone}, Chat ID: {chat_id}, Message ID: {message_id}, Text: {message_text[:100]}...")
@@ -91,17 +90,6 @@ def process_message(event: Dict[str, Any], message_count: int) -> bool:
         # Mark chat as read
         if chat_id:
             api_client.mark_chat_as_read(chat_id)
-
-        # Add reaction to the message based on content (if message_id is available)
-        # This is handled by the tool calling system, but we keep it here as fallback
-        # Note: Reactions are now handled by LLM-based intent understanding in one_on_one_handler
-        if message_id and message_text:
-            # Use LLM-based intent understanding (no context available in fallback)
-            reaction = determine_reaction(message_text, conversation_context=None)
-            if reaction:
-                # Small delay to make it feel natural
-                time.sleep(0.3)
-                api_client.add_reaction(message_id, reaction)
         
         # Return True - actual reply handling is done in handle_message_and_reply
         return True
@@ -529,21 +517,13 @@ def handle_message_and_reply(event: Dict[str, Any], message_count: int,
                 attachments=attachments
             )
             
-            (should_respond, response_reason, reply), reaction = result
+            (should_respond, response_reason, reply) = result
             
             if not should_respond:
                 logger.info(f"[SKIP] Message #{message_count} - Not responding (reason: {response_reason})")
                 return True
             
             logger.info(f"[1-ON-1] Message #{message_count} - Tool calling result: {response_reason}")
-            
-            # Add reaction if determined - but NOT for voice messages (takes too long)
-            message_id = data.get('id')
-            if reaction and message_id and not was_voice_message:
-                time.sleep(0.3)
-                api_client.add_reaction(message_id, reaction)
-            elif was_voice_message and reaction:
-                logger.debug(f"[REACTION] Skipping reaction for voice message (takes too long)")
                 
         except Exception as gen_error:
             logger.error(f"[ERROR] Message #{message_count} - Error in 1-on-1 tool calling: {gen_error}", exc_info=True)

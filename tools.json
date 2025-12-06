@@ -76,22 +76,6 @@
       }
     },
     {
-      "id": "auto_reaction",
-      "name": "Auto Reaction",
-      "description": "Automatically adds reactions to messages based on content. Detects positive words, questions, etc. Analyzes message sentiment and adds appropriate reactions: love (❤️) for positive/affectionate messages, laugh (😂) for funny messages, question (❓) for questions, emphasize (❗) for important statements, like (👍) for general positive messages. Helps make conversations more engaging and expressive.",
-      "category": "engagement",
-      "triggers": [],
-      "method": "determine_reaction",
-      "auto_trigger": true,
-      "condition": "always",
-      "example_usage": "Message with 'love' → Bot adds ❤️ reaction",
-      "when_to_use": "Always runs automatically on every message to determine appropriate reactions.",
-      "parameters": {
-        "message_text": "required",
-        "returns": "string - reaction type (love, like, laugh, question, emphasize) or None"
-      }
-    },
-    {
       "id": "group_matching",
       "name": "Group Matching",
       "description": "Automatically creates groups or adds users to existing groups when interests match. Connects users with similar interests. When a user mentions interests, searches for other users with matching interests. If match found, either adds user to existing group or creates new group with matching users. Generates fun group names based on shared interests. Helps users find their tribe and connect with like-minded people.",

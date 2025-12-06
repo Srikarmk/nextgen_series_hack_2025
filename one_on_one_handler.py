@@ -13,7 +13,6 @@ from agent import (
     add_music_link_if_applicable,
     user_likes_music,
 )
-from reaction_utils import determine_reaction
 from interest_tracker import interest_tracker
 from conversation_history import conversation_history
 
@@ -128,13 +127,13 @@ Return ONLY: "yes" if response is necessary, "no" if not necessary."""
             (should_respond: bool, reason: str, response_messages: Optional[List[str]])
         """
         if not message_text:
-            return (False, "empty_message", None), None
+            return (False, "empty_message", None)
         
         # Check if we should respond now (every 2-3 messages + necessity check)
         should_respond, response_reason = self._should_respond_now(chat_id, message_text)
         
         if not should_respond:
-            # Still track interests and add reactions, but don't send text response
+            # Still track interests, but don't send text response
             # Extract interests (always runs, even if not responding)
             if "extract_interests" in self.tools:
                 try:
@@ -144,24 +143,8 @@ Return ONLY: "yes" if response is necessary, "no" if not necessary."""
                 except:
                     pass
             
-            # Add reaction if appropriate (always runs) - but NOT for voice messages
-            reaction = None
-            if "auto_reaction" in self.tools and not was_voice_message:
-                try:
-                    recent_context = []
-                    if chat_id in conversation_history.histories:
-                        recent_messages = list(conversation_history.histories[chat_id])[-5:]
-                        for msg in recent_messages:
-                            if msg.role == "user":
-                                recent_context.append(msg.content)
-                    reaction = determine_reaction(message_text, conversation_context=recent_context)
-                    if reaction:
-                        logger.info(f"[TOOLS] Determined reaction: {reaction} (skipping text response)")
-                except:
-                    pass
-            
-            # Return: (should_respond, reason, response_messages), reaction
-            return (False, response_reason, None), reaction
+            # Return: (should_respond, reason, response_messages)
+            return (False, response_reason, None)
         
         # Get known interests
         known_interests = list(interest_tracker.get_user_interests(from_phone))
@@ -242,27 +225,7 @@ Return ONLY: "yes" if response is necessary, "no" if not necessary."""
             except Exception as e:
                 logger.error(f"[ERROR] Error adding music recommendation: {e}")
         
-        # Step 4: Auto reaction (always runs) - uses LLM to understand intent
-        # BUT: Never add reactions to voice/audio messages (takes too long)
-        reaction = None
-        if "auto_reaction" in self.tools and not was_voice_message:
-            try:
-                # Get recent conversation context for better intent understanding
-                recent_context = []
-                if chat_id in conversation_history.histories:
-                    recent_messages = list(conversation_history.histories[chat_id])[-5:]  # Last 5 messages
-                    for msg in recent_messages:
-                        if msg.role == "user":
-                            recent_context.append(msg.content)
-                
-                # Use LLM-based intent understanding for reactions
-                reaction = determine_reaction(message_text, conversation_context=recent_context)
-                if reaction:
-                    logger.info(f"[TOOLS] Determined reaction: {reaction} (based on intent)")
-            except Exception as e:
-                logger.error(f"[ERROR] Error determining reaction: {e}")
-        
-        # Step 5: Group matching (runs if interests found)
+        # Step 4: Group matching (runs if interests found)
         if interests and "group_matching" in self.tools:
             try:
                 from api_client import api_client
@@ -327,10 +290,5 @@ Return ONLY: "yes" if response is necessary, "no" if not necessary."""
             except Exception as e:
                 logger.error(f"[ERROR] Error in group matching: {e}", exc_info=True)
         
-        return (True, "gen_z_response", response_messages), reaction
-    
-    def get_reaction(self, message_text: str) -> Optional[str]:
-        """Get reaction for a message"""
-        # Use LLM-based intent understanding for reactions
-        return determine_reaction(message_text, conversation_context=None)
+        return (True, "gen_z_response", response_messages)
 
